@@ -26,7 +26,7 @@ while [[ "$#" -gt 0 ]]; do
     shift
 done
 
-time=$(date "+%Y-%m-%d_%H:%M:%S")
+time=$(date "+%Y-%m-%d_%H-%M-%S")
 
 if [ "$warmup" = "True" ]; then
     python train.py --eval -s data/${data} --lod ${lod} --gpu ${gpu} --voxel_size ${vsize} --update_init_factor ${update_init_factor} --appearance_dim ${appearance_dim} --ratio ${ratio} --warmup --iterations ${iterations} --port $port -m outputs/${data}/${logdir}/$time
