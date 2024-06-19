@@ -105,7 +105,7 @@ class GaussianModel:
 
         self.opacity_dist_dim = 1 if self.add_opacity_dist else 0
         self.mlp_opacity = nn.Sequential(
-            nn.Linear(feat_dim+3+self.opacity_dist_dim, feat_dim),
+            nn.Linear(feat_dim+3+self.opacity_dist_dim+1, feat_dim),
             nn.ReLU(True),
             nn.Linear(feat_dim, n_offsets),
             nn.Tanh()
@@ -114,14 +114,14 @@ class GaussianModel:
         self.add_cov_dist = add_cov_dist
         self.cov_dist_dim = 1 if self.add_cov_dist else 0
         self.mlp_cov = nn.Sequential(
-            nn.Linear(feat_dim+3+self.cov_dist_dim, feat_dim),
+            nn.Linear(feat_dim+3+self.cov_dist_dim+1, feat_dim),
             nn.ReLU(True),
             nn.Linear(feat_dim, 7*self.n_offsets),
         ).cuda()
 
         self.color_dist_dim = 1 if self.add_color_dist else 0
         self.mlp_color = nn.Sequential(
-            nn.Linear(feat_dim+3+self.color_dist_dim+self.appearance_dim, feat_dim),
+            nn.Linear(feat_dim+3+self.color_dist_dim+self.appearance_dim+1, feat_dim),
             nn.ReLU(True),
             nn.Linear(feat_dim, 3*self.n_offsets),
             nn.Sigmoid()

@@ -43,6 +43,7 @@ class CameraInfo(NamedTuple):
     image_name: str
     width: int
     height: int
+    timestamp: float = 0.0
 
 class SceneInfo(NamedTuple):
     point_cloud: BasicPointCloud
@@ -110,7 +111,7 @@ def readColmapCameras(cam_extrinsics, cam_intrinsics, images_folder):
         image_name = os.path.basename(image_path).split(".")[0]
         image = Image.open(image_path)
 
-        # print(f'image: {image.size}')
+        print(f'image: {image.size}')
 
         cam_info = CameraInfo(uid=uid, R=R, T=T, FovY=FovY, FovX=FovX, image=image,
                               image_path=image_path, image_name=image_name, width=width, height=height)
@@ -234,6 +235,7 @@ def readCamerasFromTransforms(path, transformsfile, white_background, extension=
                 continue
             # NeRF 'transform_matrix' is a camera-to-world transform
             c2w = np.array(frame["transform_matrix"])
+            timestamp = frame["time"]
             
             if idx % 10 == 0:
                 progress_bar.set_postfix({"num": Fore.YELLOW+f"{ct}/{len(frames)}"+Style.RESET_ALL})
@@ -242,6 +244,10 @@ def readCamerasFromTransforms(path, transformsfile, white_background, extension=
                 progress_bar.close()
             
             ct += 1
+
+            if timestamp > 1.0:
+                continue
+
             # change from OpenGL/Blender camera axes (Y up, Z back) to COLMAP (Y down, Z forward)
             c2w[:3, 1:3] *= -1
             if "small_city_img" in path:
@@ -281,13 +287,18 @@ def readCamerasFromTransforms(path, transformsfile, white_background, extension=
                 fovy = focal2fov(fov2focal(fovx, image.size[0]), image.size[1])
                 FovY = fovy 
                 FovX = fovx
-            else:
+            elif 'fl_x' in frame:
                 # given focal in pixel unit
                 FovY = focal2fov(frame["fl_y"], image.size[1])
                 FovX = focal2fov(frame["fl_x"], image.size[0])
+            else:
+                fl_x = contents['fl_x']
+                fl_y = contents['fl_y']
+                FovY = focal2fov(fl_y, image.size[1])
+                FovX = focal2fov(fl_x, image.size[0])
 
             cam_infos.append(CameraInfo(uid=idx, R=R, T=T, FovY=FovY, FovX=FovX, image=image,
-                            image_path=image_path, image_name=image_name, width=image.size[0], height=image.size[1]))
+                            image_path=image_path, image_name=image_name, width=image.size[0], height=image.size[1], timestamp=timestamp))
             
             if is_debug and idx > 50:
                 break
@@ -306,6 +317,7 @@ def readNerfSyntheticInfo(path, white_background, eval, extension=".png", ply_pa
     nerf_normalization = getNerfppNorm(train_cam_infos)
     if ply_path is None:
         ply_path = os.path.join(path, "points3d.ply")
+        print(f"ply_path: {ply_path}")
     if not os.path.exists(ply_path):
         # Since this data set has no colmap data, we start with random points
         num_pts = 10_000
