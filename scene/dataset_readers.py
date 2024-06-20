@@ -15,6 +15,7 @@ import sys
 from PIL import Image
 from tqdm import tqdm
 from typing import NamedTuple
+from multiprocessing import Pool, cpu_count
 from colorama import Fore, init, Style
 from scene.colmap_loader import read_extrinsics_text, read_intrinsics_text, qvec2rotmat, \
     read_extrinsics_binary, read_intrinsics_binary, read_points3D_binary, read_points3D_text
@@ -306,9 +307,9 @@ def readCamerasFromTransforms(path, transformsfile, white_background, extension=
 
 def readNerfSyntheticInfo(path, white_background, eval, extension=".png", ply_path=None):
     print("Reading Training Transforms")
-    train_cam_infos = readCamerasFromTransforms(path, "transforms_train.json", white_background, extension)
+    train_cam_infos = readCamerasFromTransforms2(path, "transforms_train.json", white_background, extension)
     print("Reading Test Transforms")
-    test_cam_infos = readCamerasFromTransforms(path, "transforms_test.json", white_background, extension)
+    test_cam_infos = readCamerasFromTransforms2(path, "transforms_test.json", white_background, extension)
     
     if not eval:
         train_cam_infos.extend(test_cam_infos)
@@ -340,6 +341,99 @@ def readNerfSyntheticInfo(path, white_background, eval, extension=".png", ply_pa
                            nerf_normalization=nerf_normalization,
                            ply_path=ply_path)
     return scene_info
+
+def process_frame(args):
+    idx, frame, path, extension, white_background, undistorted, fovx, contents = args
+    cam_name = os.path.join(path, frame["file_path"] + extension)
+    if not os.path.exists(cam_name):
+        return None
+
+    c2w = np.array(frame["transform_matrix"])
+    timestamp = frame["time"]
+
+    # Change from OpenGL/Blender camera axes (Y up, Z back) to COLMAP (Y down, Z forward)
+    c2w[:3, 1:3] *= -1
+    if "small_city_img" in path:
+        c2w[-1, -1] = 1
+
+    # Get the world-to-camera transform and set R, T
+    w2c = np.linalg.inv(c2w)
+    R = np.transpose(w2c[:3, :3])
+    T = w2c[:3, 3]
+
+    image_path = os.path.join(path, cam_name)
+    image_name = Path(cam_name).stem
+    image = Image.open(image_path)
+
+    if undistorted:
+        mtx = np.array(
+            [
+                [frame["fl_x"], 0, frame["cx"]],
+                [0, frame["fl_y"], frame["cy"]],
+                [0, 0, 1.0],
+            ],
+            dtype=np.float32,
+        )
+        dist = np.array([frame["k1"], frame["k2"], frame["p1"], frame["p2"], frame["k3"]], dtype=np.float32)
+        im_data = np.array(image.convert("RGB"))
+        arr = cv2.undistort(im_data / 255.0, mtx, dist, None, mtx)
+        image = Image.fromarray(np.array(arr * 255.0, dtype=np.byte), "RGB")
+    else:
+        im_data = np.array(image.convert("RGBA"))
+        bg = np.array([1, 1, 1]) if white_background else np.array([0, 0, 0])
+        norm_data = im_data / 255.0
+        arr = norm_data[:, :, :3] * norm_data[:, :, 3:4] + bg * (1 - norm_data[:, :, 3:4])
+        image = Image.fromarray(np.array(arr * 255.0, dtype=np.byte), "RGB")
+
+    if fovx is not None:
+        fovy = focal2fov(fov2focal(fovx, image.size[0]), image.size[1])
+        FovY = fovy
+        FovX = fovx
+    elif 'fl_x' in frame:
+        FovY = focal2fov(frame["fl_y"], image.size[1])
+        FovX = focal2fov(frame["fl_x"], image.size[0])
+    else:
+        fl_x = contents['fl_x']
+        fl_y = contents['fl_y']
+        FovY = focal2fov(fl_y, image.size[1])
+        FovX = focal2fov(fl_x, image.size[0])
+
+    return CameraInfo(
+        uid=idx, R=R, T=T, FovY=FovY, FovX=FovX, image=image,
+        image_path=image_path, image_name=image_name,
+        width=image.size[0], height=image.size[1], timestamp=timestamp
+    )
+
+def readCamerasFromTransforms2(path, transformsfile, white_background, extension=".png", is_debug=False, undistorted=False):
+    with open(os.path.join(path, transformsfile)) as json_file:
+        contents = json.load(json_file)
+        try:
+            fovx = contents["camera_angle_x"]
+        except KeyError:
+            fovx = None
+
+        frames = contents["frames"]
+        if frames[0]["file_path"].split('.')[-1] in ['jpg', 'jpeg', 'JPG', 'png']:
+            extension = ""
+
+        num_workers = cpu_count()
+        progress_bar = tqdm(total=len(frames), desc="Loading dataset")
+
+        args = [
+            (idx, frame, path, extension, white_background, undistorted, fovx, contents)
+            for idx, frame in enumerate(frames)
+        ]
+
+        cam_infos = []
+        with Pool(num_workers) as pool:
+            for cam_info in pool.imap(process_frame, args):
+                if cam_info is not None:
+                    cam_infos.append(cam_info)
+                progress_bar.update()
+
+        progress_bar.close()
+
+        return cam_infos
 
 sceneLoadTypeCallbacks = {
     "Colmap": readColmapSceneInfo,
