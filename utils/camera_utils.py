@@ -55,11 +55,18 @@ def loadCam(args, id, cam_info, resolution_scale):
     if resized_image_rgb.shape[1] == 4:
         loaded_mask = resized_image_rgb[3:4, ...]
 
+    # positional encoding
+    ts = cam_info.timestamp / 10
+    timestamp = [ts]
+    for i in range((args.time_dim-1)//2):
+        timestamp.append(np.pi * np.sin(ts * 2**i))
+        timestamp.append(np.pi * np.cos(ts * 2**i))
+
     return Camera(colmap_id=cam_info.uid, R=cam_info.R, T=cam_info.T, 
                   FoVx=cam_info.FovX, FoVy=cam_info.FovY, 
                   image=gt_image, gt_alpha_mask=loaded_mask,
                   image_name=cam_info.image_name, uid=id, data_device=args.data_device,
-                  timestamp=cam_info.timestamp)
+                  timestamp=timestamp)
 
 def cameraList_from_camInfos(cam_infos, resolution_scale, args):
     camera_list = []

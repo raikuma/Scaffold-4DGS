@@ -33,8 +33,7 @@ def generate_neural_gaussians(viewpoint_camera, pc : GaussianModel, visible_mask
     ob_view = ob_view / ob_dist
     # time
     ob_time = torch.cat([
-                torch.ones_like(ob_dist, device=ob_dist.device) * math.sin(2*viewpoint_camera.timestamp),
-                torch.ones_like(ob_dist, device=ob_dist.device) * math.cos(2*viewpoint_camera.timestamp)
+                torch.ones_like(ob_dist, device=ob_dist.device) * t for t in viewpoint_camera.timestamp
             ], dim=1)
     
 

@@ -57,6 +57,7 @@ class GaussianModel:
                  add_opacity_dist : bool = False,
                  add_cov_dist : bool = False,
                  add_color_dist : bool = False,
+                 time_dim: int=1
                  ):
 
         self.feat_dim = feat_dim
@@ -66,7 +67,7 @@ class GaussianModel:
         self.update_init_factor = update_init_factor
         self.update_hierachy_factor = update_hierachy_factor
         self.use_feat_bank = use_feat_bank
-        self.time_dim = 2
+        self.time_dim = time_dim
 
         self.appearance_dim = appearance_dim
         self.embedding_appearance = None
