@@ -13,32 +13,40 @@ from scene.cameras import Camera
 import numpy as np
 from utils.general_utils import PILtoTorch
 from utils.graphics_utils import fov2focal
+import torch
 
 WARNED = False
 
 def loadCam(args, id, cam_info, resolution_scale):
-    orig_w, orig_h = cam_info.image.size
+    # orig_w, orig_h = cam_info.image.size
 
-    if args.resolution in [1, 2, 4, 8]:
-        resolution = round(orig_w/(resolution_scale * args.resolution)), round(orig_h/(resolution_scale * args.resolution))
-    else:  # should be a type that converts to float
-        if args.resolution == -1:
-            if orig_w > 1600:
-                global WARNED
-                if not WARNED:
-                    print("[ INFO ] Encountered quite large input images (>1.6K pixels width), rescaling to 1.6K.\n "
-                        "If this is not desired, please explicitly specify '--resolution/-r' as 1")
-                    WARNED = True
-                global_down = orig_w / 1600
-            else:
-                global_down = 1
-        else:
-            global_down = orig_w / args.resolution
+    # if args.resolution in [1, 2, 4, 8]:
+    #     resolution = round(orig_w/(resolution_scale * args.resolution)), round(orig_h/(resolution_scale * args.resolution))
+    # else:  # should be a type that converts to float
+    #     if args.resolution == -1:
+    #         if orig_w > 1600:
+    #             global WARNED
+    #             if not WARNED:
+    #                 print("[ INFO ] Encountered quite large input images (>1.6K pixels width), rescaling to 1.6K.\n "
+    #                     "If this is not desired, please explicitly specify '--resolution/-r' as 1")
+    #                 WARNED = True
+    #             global_down = orig_w / 1600
+    #         else:
+    #             global_down = 1
+    #     else:
+    #         global_down = orig_w / args.resolution
 
-        scale = float(global_down) * float(resolution_scale)
-        resolution = (int(orig_w / scale), int(orig_h / scale))
+    #     scale = float(global_down) * float(resolution_scale)
+    #     resolution = (int(orig_w / scale), int(orig_h / scale))
 
-    resized_image_rgb = PILtoTorch(cam_info.image, resolution)
+    # resized_image_rgb = PILtoTorch(cam_info.image, resolution)
+
+    resized_image = torch.from_numpy(np.array(cam_info.image)) / 255.0
+    if len(resized_image.shape) == 3:
+        resized_image = resized_image.permute(2, 0, 1)
+    else:
+        resized_image = resized_image.unsqueeze(dim=-1).permute(2, 0, 1)
+    resized_image_rgb = resized_image
 
     gt_image = resized_image_rgb[:3, ...]
     loaded_mask = None

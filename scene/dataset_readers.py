@@ -148,7 +148,7 @@ def storePly(path, xyz, rgb):
     ply_data = PlyData([vertex_element])
     ply_data.write(path)
 
-def readColmapSceneInfo(path, images, eval, lod, llffhold=8):
+def readColmapSceneInfo(args, path, images, eval, lod, llffhold=8):
     try:
         cameras_extrinsic_file = os.path.join(path, "sparse/0", "images.bin")
         cameras_intrinsic_file = os.path.join(path, "sparse/0", "cameras.bin")
@@ -208,7 +208,7 @@ def readColmapSceneInfo(path, images, eval, lod, llffhold=8):
                            ply_path=ply_path)
     return scene_info
 
-def readCamerasFromTransforms(path, transformsfile, white_background, extension=".png", is_debug=False, undistorted=False):
+def readCamerasFromTransforms(args, path, transformsfile, white_background, extension=".png", is_debug=False, undistorted=False):
     cam_infos = []
     with open(os.path.join(path, transformsfile)) as json_file:
         contents = json.load(json_file)
@@ -305,11 +305,11 @@ def readCamerasFromTransforms(path, transformsfile, white_background, extension=
                 break
     return cam_infos
 
-def readNerfSyntheticInfo(path, white_background, eval, extension=".png", ply_path=None):
+def readNerfSyntheticInfo(args, path, white_background, eval, extension=".png", ply_path=None):
     print("Reading Training Transforms")
-    train_cam_infos = readCamerasFromTransforms2(path, "transforms_train.json", white_background, extension)
+    train_cam_infos = readCamerasFromTransforms2(args, path, "transforms_train.json", white_background, extension)
     print("Reading Test Transforms")
-    test_cam_infos = readCamerasFromTransforms2(path, "transforms_test.json", white_background, extension)
+    test_cam_infos = readCamerasFromTransforms2(args, path, "transforms_test.json", white_background, extension)
     
     if not eval:
         train_cam_infos.extend(test_cam_infos)
@@ -342,8 +342,10 @@ def readNerfSyntheticInfo(path, white_background, eval, extension=".png", ply_pa
                            ply_path=ply_path)
     return scene_info
 
+WARNED = False
+
 def process_frame(args):
-    idx, frame, path, extension, white_background, undistorted, fovx, contents = args
+    idx, frame, path, extension, white_background, undistorted, fovx, contents, resolution = args
     cam_name = os.path.join(path, frame["file_path"] + extension)
     if not os.path.exists(cam_name):
         return None
@@ -398,13 +400,37 @@ def process_frame(args):
         FovY = focal2fov(fl_y, image.size[1])
         FovX = focal2fov(fl_x, image.size[0])
 
+    resolution_scale = 1.0
+    orig_w, orig_h = image.size
+
+    if resolution in [1, 2, 4, 8]:
+        resolution = round(orig_w/(resolution_scale * resolution)), round(orig_h/(resolution_scale * resolution))
+    else:  # should be a type that converts to float
+        if resolution == -1:
+            if orig_w > 1600:
+                global WARNED
+                if not WARNED:
+                    print("[ INFO ] Encountered quite large input images (>1.6K pixels width), rescaling to 1.6K.\n "
+                        "If this is not desired, please explicitly specify '--resolution/-r' as 1")
+                    WARNED = True
+                global_down = orig_w / 1600
+            else:
+                global_down = 1
+        else:
+            global_down = orig_w / resolution
+
+        scale = float(global_down) * float(resolution_scale)
+        resolution = (int(orig_w / scale), int(orig_h / scale))
+
+    resized_image_rgb = image.resize(resolution)
+
     return CameraInfo(
-        uid=idx, R=R, T=T, FovY=FovY, FovX=FovX, image=image,
+        uid=idx, R=R, T=T, FovY=FovY, FovX=FovX, image=resized_image_rgb,
         image_path=image_path, image_name=image_name,
         width=image.size[0], height=image.size[1], timestamp=timestamp
     )
 
-def readCamerasFromTransforms2(path, transformsfile, white_background, extension=".png", is_debug=False, undistorted=False):
+def readCamerasFromTransforms2(args, path, transformsfile, white_background, extension=".png", is_debug=False, undistorted=False):
     with open(os.path.join(path, transformsfile)) as json_file:
         contents = json.load(json_file)
         try:
@@ -416,17 +442,17 @@ def readCamerasFromTransforms2(path, transformsfile, white_background, extension
         if frames[0]["file_path"].split('.')[-1] in ['jpg', 'jpeg', 'JPG', 'png']:
             extension = ""
 
-        num_workers = cpu_count()
+        num_workers = min(cpu_count(), len(frames))
         progress_bar = tqdm(total=len(frames), desc="Loading dataset")
 
-        args = [
-            (idx, frame, path, extension, white_background, undistorted, fovx, contents)
+        _args = [
+            (idx, frame, path, extension, white_background, undistorted, fovx, contents, args.resolution)
             for idx, frame in enumerate(frames)
         ]
 
         cam_infos = []
         with Pool(num_workers) as pool:
-            for cam_info in pool.imap(process_frame, args):
+            for cam_info in pool.imap(process_frame, _args):
                 if cam_info is not None:
                     cam_infos.append(cam_info)
                 progress_bar.update()
