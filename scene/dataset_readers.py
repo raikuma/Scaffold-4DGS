@@ -345,7 +345,7 @@ def readNerfSyntheticInfo(args, path, white_background, eval, extension=".png", 
 WARNED = False
 
 def process_frame(args):
-    idx, frame, path, extension, white_background, undistorted, fovx, contents, resolution = args
+    idx, frame, path, extension, white_background, undistorted, fovx, contents, resolution, orig_w, orig_h = args
     cam_name = os.path.join(path, frame["file_path"] + extension)
     if not os.path.exists(cam_name):
         return None
@@ -363,71 +363,79 @@ def process_frame(args):
     R = np.transpose(w2c[:3, :3])
     T = w2c[:3, 3]
 
+    precalc_path = os.path.join(path, cam_name.replace('images', 'images_'+str(resolution)))
     image_path = os.path.join(path, cam_name)
     image_name = Path(cam_name).stem
-    image = Image.open(image_path)
 
-    if undistorted:
-        mtx = np.array(
-            [
-                [frame["fl_x"], 0, frame["cx"]],
-                [0, frame["fl_y"], frame["cy"]],
-                [0, 0, 1.0],
-            ],
-            dtype=np.float32,
-        )
-        dist = np.array([frame["k1"], frame["k2"], frame["p1"], frame["p2"], frame["k3"]], dtype=np.float32)
-        im_data = np.array(image.convert("RGB"))
-        arr = cv2.undistort(im_data / 255.0, mtx, dist, None, mtx)
-        image = Image.fromarray(np.array(arr * 255.0, dtype=np.byte), "RGB")
+    if os.path.exists(precalc_path):
+        image = Image.open(precalc_path)
+
     else:
-        im_data = np.array(image.convert("RGBA"))
-        bg = np.array([1, 1, 1]) if white_background else np.array([0, 0, 0])
-        norm_data = im_data / 255.0
-        arr = norm_data[:, :, :3] * norm_data[:, :, 3:4] + bg * (1 - norm_data[:, :, 3:4])
-        image = Image.fromarray(np.array(arr * 255.0, dtype=np.byte), "RGB")
+        image = Image.open(image_path)
+
+        if undistorted:
+            mtx = np.array(
+                [
+                    [frame["fl_x"], 0, frame["cx"]],
+                    [0, frame["fl_y"], frame["cy"]],
+                    [0, 0, 1.0],
+                ],
+                dtype=np.float32,
+            )
+            dist = np.array([frame["k1"], frame["k2"], frame["p1"], frame["p2"], frame["k3"]], dtype=np.float32)
+            im_data = np.array(image.convert("RGB"))
+            arr = cv2.undistort(im_data / 255.0, mtx, dist, None, mtx)
+            image = Image.fromarray(np.array(arr * 255.0, dtype=np.byte), "RGB")
+        else:
+            im_data = np.array(image.convert("RGBA"))
+            bg = np.array([1, 1, 1]) if white_background else np.array([0, 0, 0])
+            norm_data = im_data / 255.0
+            arr = norm_data[:, :, :3] * norm_data[:, :, 3:4] + bg * (1 - norm_data[:, :, 3:4])
+            image = Image.fromarray(np.array(arr * 255.0, dtype=np.byte), "RGB")
+
+        resolution_scale = 1.0
+
+        if resolution in [1, 2, 4, 8]:
+            resolution = round(orig_w/(resolution_scale * resolution)), round(orig_h/(resolution_scale * resolution))
+        else:  # should be a type that converts to float
+            if resolution == -1:
+                if orig_w > 1600:
+                    global WARNED
+                    if not WARNED:
+                        print("[ INFO ] Encountered quite large input images (>1.6K pixels width), rescaling to 1.6K.\n "
+                            "If this is not desired, please explicitly specify '--resolution/-r' as 1")
+                        WARNED = True
+                    global_down = orig_w / 1600
+                else:
+                    global_down = 1
+            else:
+                global_down = orig_w / resolution
+
+            scale = float(global_down) * float(resolution_scale)
+            resolution = (int(orig_w / scale), int(orig_h / scale))
+
+        image = image.resize(resolution)
+
+        os.makedirs(os.path.dirname(precalc_path), exist_ok=True)
+        image.save(precalc_path)
 
     if fovx is not None:
-        fovy = focal2fov(fov2focal(fovx, image.size[0]), image.size[1])
+        fovy = focal2fov(fov2focal(fovx, orig_w), orig_h)
         FovY = fovy
         FovX = fovx
     elif 'fl_x' in frame:
-        FovY = focal2fov(frame["fl_y"], image.size[1])
-        FovX = focal2fov(frame["fl_x"], image.size[0])
+        FovY = focal2fov(frame["fl_y"], orig_h)
+        FovX = focal2fov(frame["fl_x"], orig_w)
     else:
         fl_x = contents['fl_x']
         fl_y = contents['fl_y']
-        FovY = focal2fov(fl_y, image.size[1])
-        FovX = focal2fov(fl_x, image.size[0])
-
-    resolution_scale = 1.0
-    orig_w, orig_h = image.size
-
-    if resolution in [1, 2, 4, 8]:
-        resolution = round(orig_w/(resolution_scale * resolution)), round(orig_h/(resolution_scale * resolution))
-    else:  # should be a type that converts to float
-        if resolution == -1:
-            if orig_w > 1600:
-                global WARNED
-                if not WARNED:
-                    print("[ INFO ] Encountered quite large input images (>1.6K pixels width), rescaling to 1.6K.\n "
-                        "If this is not desired, please explicitly specify '--resolution/-r' as 1")
-                    WARNED = True
-                global_down = orig_w / 1600
-            else:
-                global_down = 1
-        else:
-            global_down = orig_w / resolution
-
-        scale = float(global_down) * float(resolution_scale)
-        resolution = (int(orig_w / scale), int(orig_h / scale))
-
-    resized_image_rgb = image.resize(resolution)
+        FovY = focal2fov(fl_y, orig_h)
+        FovX = focal2fov(fl_x, orig_w)
 
     return CameraInfo(
-        uid=idx, R=R, T=T, FovY=FovY, FovX=FovX, image=resized_image_rgb,
+        uid=idx, R=R, T=T, FovY=FovY, FovX=FovX, image=image,
         image_path=image_path, image_name=image_name,
-        width=image.size[0], height=image.size[1], timestamp=timestamp
+        width=orig_w, height=orig_h, timestamp=timestamp
     )
 
 def readCamerasFromTransforms2(args, path, transformsfile, white_background, extension=".png", is_debug=False, undistorted=False):
@@ -442,11 +450,15 @@ def readCamerasFromTransforms2(args, path, transformsfile, white_background, ext
         if frames[0]["file_path"].split('.')[-1] in ['jpg', 'jpeg', 'JPG', 'png']:
             extension = ""
 
+        img = Image.open(os.path.join(path, frames[0]["file_path"] + extension))
+        orig_w, orig_h = img.size
+        del img
+
         num_workers = min(cpu_count(), len(frames))
         progress_bar = tqdm(total=len(frames), desc="Loading dataset")
 
         _args = [
-            (idx, frame, path, extension, white_background, undistorted, fovx, contents, args.resolution)
+            (idx, frame, path, extension, white_background, undistorted, fovx, contents, args.resolution, orig_w, orig_h)
             for idx, frame in enumerate(frames)
         ]
 
