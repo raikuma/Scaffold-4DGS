@@ -32,7 +32,11 @@ def generate_neural_gaussians(viewpoint_camera, pc : GaussianModel, visible_mask
     # view
     ob_view = ob_view / ob_dist
     # time
-    ob_time = torch.ones_like(ob_dist, device=ob_dist.device) * viewpoint_camera.timestamp
+    ob_time = torch.cat([
+                torch.ones_like(ob_dist, device=ob_dist.device) * math.sin(2*viewpoint_camera.timestamp),
+                torch.ones_like(ob_dist, device=ob_dist.device) * math.cos(2*viewpoint_camera.timestamp)
+            ], dim=1)
+    
 
     ## view-adaptive feature
     if pc.use_feat_bank:
@@ -47,8 +51,8 @@ def generate_neural_gaussians(viewpoint_camera, pc : GaussianModel, visible_mask
             feat[:,::1, :1]*bank_weight[:,:,2:]
         feat = feat.squeeze(dim=-1) # [n, c]
 
-    cat_local_view = torch.cat([feat, ob_view, ob_dist, ob_time], dim=1) # [N, c+3+1+1]
-    cat_local_view_wodist = torch.cat([feat, ob_view, ob_time], dim=1) # [N, c+3+1]
+    cat_local_view = torch.cat([feat, ob_view, ob_dist, ob_time], dim=1) # [N, c+3+1+time_dim]
+    cat_local_view_wodist = torch.cat([feat, ob_view, ob_time], dim=1) # [N, c+3+time_dim]
     if pc.appearance_dim > 0:
         camera_indicies = torch.ones_like(cat_local_view[:,0], dtype=torch.long, device=ob_dist.device) * viewpoint_camera.uid
         # camera_indicies = torch.ones_like(cat_local_view[:,0], dtype=torch.long, device=ob_dist.device) * 10
