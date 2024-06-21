@@ -40,6 +40,7 @@ from scene import Scene, GaussianModel
 from utils.general_utils import safe_state
 import uuid
 from tqdm import tqdm
+import cv2
 from utils.image_utils import psnr
 from argparse import ArgumentParser, Namespace
 from arguments import ModelParams, PipelineParams, OptimizationParams
@@ -279,10 +280,14 @@ def render_set(model_path, name, iteration, views, gaussians, pipeline, backgrou
     render_path = os.path.join(model_path, name, "ours_{}".format(iteration), "renders")
     error_path = os.path.join(model_path, name, "ours_{}".format(iteration), "errors")
     gts_path = os.path.join(model_path, name, "ours_{}".format(iteration), "gt")
+    video_path = os.path.join(model_path, name, "ours_{}".format(iteration), "renders.mp4")
     makedirs(render_path, exist_ok=True)
     makedirs(error_path, exist_ok=True)
     makedirs(gts_path, exist_ok=True)
     
+    height, width = views[0].original_image.shape[1:3]
+    cap = cv2.VideoWriter(video_path, cv2.VideoWriter_fourcc(*'mp4v'), 30, (width, height))
+
     t_list = []
     visible_count_list = []
     name_list = []
@@ -301,6 +306,9 @@ def render_set(model_path, name, iteration, views, gaussians, pipeline, backgrou
         rendering = torch.clamp(render_pkg["render"], 0.0, 1.0)
         visible_count = (render_pkg["radii"] > 0).sum()
         visible_count_list.append(visible_count)
+        import pdb; pdb.set_trace()
+        img = cv2.cvtColor((rendering.cpu().numpy().transpose(1, 2, 0) * 255).astype(np.uint8), cv2.COLOR_RGB2BGR)
+        cap.write(img)
 
 
         # gts
@@ -315,6 +323,8 @@ def render_set(model_path, name, iteration, views, gaussians, pipeline, backgrou
         torchvision.utils.save_image(errormap, os.path.join(error_path, '{0:05d}'.format(idx) + ".png"))
         torchvision.utils.save_image(gt, os.path.join(gts_path, '{0:05d}'.format(idx) + ".png"))
         per_view_dict['{0:05d}'.format(idx) + ".png"] = visible_count.item()
+
+    cap.release()
     
     with open(os.path.join(model_path, name, "ours_{}".format(iteration), "per_view_count.json"), 'w') as fp:
             json.dump(per_view_dict, fp, indent=True)
@@ -493,10 +503,10 @@ if __name__ == "__main__":
 
     
 
-    # try:
-    #     saveRuntimeCode(os.path.join(args.model_path, 'backup'))
-    # except:
-    #     logger.info(f'save code failed~')
+    try:
+        saveRuntimeCode(os.path.join(args.model_path, 'backup'))
+    except:
+        logger.info(f'save code failed~')
         
     dataset = args.source_path.split('/')[-1]
     exp_name = args.model_path.split('/')[-2]
