@@ -306,7 +306,6 @@ def render_set(model_path, name, iteration, views, gaussians, pipeline, backgrou
         rendering = torch.clamp(render_pkg["render"], 0.0, 1.0)
         visible_count = (render_pkg["radii"] > 0).sum()
         visible_count_list.append(visible_count)
-        import pdb; pdb.set_trace()
         img = cv2.cvtColor((rendering.cpu().numpy().transpose(1, 2, 0) * 255).astype(np.uint8), cv2.COLOR_RGB2BGR)
         cap.write(img)
 
@@ -503,10 +502,10 @@ if __name__ == "__main__":
 
     
 
-    try:
-        saveRuntimeCode(os.path.join(args.model_path, 'backup'))
-    except:
-        logger.info(f'save code failed~')
+    # try:
+    #     saveRuntimeCode(os.path.join(args.model_path, 'backup'))
+    # except:
+    #     logger.info(f'save code failed~')
         
     dataset = args.source_path.split('/')[-1]
     exp_name = args.model_path.split('/')[-2]
