@@ -57,8 +57,10 @@ def loadCam(args, id, cam_info, resolution_scale):
 
     # positional encoding
     ts = cam_info.timestamp / 10
-    timestamp = [ts]
-    for i in range((args.time_dim-1)//2):
+    timestamp = []
+    if args.time_dim % 2 == 1:
+        timestamp.append(ts)
+    for i in range(args.time_dim // 2):
         timestamp.append(np.pi * np.sin(ts * 2**i))
         timestamp.append(np.pi * np.cos(ts * 2**i))
 
