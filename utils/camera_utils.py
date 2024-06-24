@@ -68,7 +68,6 @@ def loadCam(args, id, cam_info, resolution_scale):
         state = np.random.get_state()
         np.random.seed(int(cam_info.timestamp*1000))
         timestamp = np.random.rand(args.time_dim)
-        print(timestamp)
         np.random.set_state(state)
     else:
         timestamp = [ts]
