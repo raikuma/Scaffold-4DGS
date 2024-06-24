@@ -56,13 +56,23 @@ def loadCam(args, id, cam_info, resolution_scale):
         loaded_mask = resized_image_rgb[3:4, ...]
 
     # positional encoding
-    ts = cam_info.timestamp / 10
-    timestamp = []
-    if args.time_dim % 2 == 1:
-        timestamp.append(ts)
-    for i in range(args.time_dim // 2):
-        timestamp.append(np.pi * np.sin(ts * 2**i))
-        timestamp.append(np.pi * np.cos(ts * 2**i))
+    if args.init_time == 'positional_encoding':
+        ts = cam_info.timestamp / 10
+        timestamp = []
+        if args.time_dim % 2 == 1:
+            timestamp.append(ts)
+        for i in range(args.time_dim // 2):
+            timestamp.append(np.pi * np.sin(ts * 2**i))
+            timestamp.append(np.pi * np.cos(ts * 2**i))
+    elif args.init_time == 'random':
+        state = np.random.get_state()
+        np.random.seed(int(cam_info.timestamp*1000))
+        timestamp = np.random.rand(args.time_dim)
+        print(timestamp)
+        np.random.set_state(state)
+    else:
+        timestamp = [ts]
+
 
     return Camera(colmap_id=cam_info.uid, R=cam_info.R, T=cam_info.T, 
                   FoVx=cam_info.FovX, FoVy=cam_info.FovY, 
