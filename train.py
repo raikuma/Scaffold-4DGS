@@ -145,7 +145,7 @@ def training(dataset, opt, pipe, dataset_name, testing_iterations, saving_iterat
         scaling_reg = scaling.prod(dim=1).mean()
         loss = (1.0 - opt.lambda_dssim) * Ll1 + opt.lambda_dssim * ssim_loss + 0.01*scaling_reg
 
-        sparsity_loss = -torch.mean(torch.abs(torch.sigmoid(gaussians._anchor_feat[:,0:1]))) * opt.lambda_sparsity
+        sparsity_loss = torch.mean(torch.abs(torch.sigmoid(gaussians._anchor_feat[:,0:1]))) * opt.lambda_sparsity
         loss += sparsity_loss
 
         loss.backward()
