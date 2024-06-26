@@ -20,10 +20,11 @@ def generate_neural_gaussians(viewpoint_camera, pc : GaussianModel, visible_mask
     if visible_mask is None:
         visible_mask = torch.ones(pc.get_anchor.shape[0], dtype=torch.bool, device = pc.get_anchor.device)
     
-    feat = pc._anchor_feat[visible_mask]
+    feat = pc._anchor_feat[:,1:][visible_mask]
     anchor = pc.get_anchor[visible_mask]
     grid_offsets = pc._offset[visible_mask]
     grid_scaling = pc.get_scaling[visible_mask]
+    dynamicness = torch.sigmoid(pc._anchor_feat[:,0:1][visible_mask])
 
     ## get view properties for anchor
     ob_view = anchor - viewpoint_camera.camera_center
@@ -48,8 +49,12 @@ def generate_neural_gaussians(viewpoint_camera, pc : GaussianModel, visible_mask
             feat[:,::1, :1]*bank_weight[:,:,2:]
         feat = feat.squeeze(dim=-1) # [n, c]
 
-    cat_local_view = torch.cat([feat, ob_view, ob_dist, ob_time], dim=1) # [N, c+3+1+time_dim]
-    cat_local_view_wodist = torch.cat([feat, ob_view, ob_time], dim=1) # [N, c+3+time_dim]
+    cat_local_view = torch.cat([feat, ob_view, ob_dist], dim=1) # [N, c+3+1+time_dim]
+    cat_local_view_wodist = torch.cat([feat, ob_view], dim=1) # [N, c+3+time_dim]
+
+    d_cat_local_view = torch.cat([feat, ob_view, ob_dist, ob_time], dim=1) # [N, c+3+1+time_dim]
+    d_cat_local_view_wodist = torch.cat([feat, ob_view, ob_time], dim=1) # [N, c+3+time_dim]
+
     if pc.appearance_dim > 0:
         camera_indicies = torch.ones_like(cat_local_view[:,0], dtype=torch.long, device=ob_dist.device) * viewpoint_camera.uid
         # camera_indicies = torch.ones_like(cat_local_view[:,0], dtype=torch.long, device=ob_dist.device) * 10
@@ -57,9 +62,9 @@ def generate_neural_gaussians(viewpoint_camera, pc : GaussianModel, visible_mask
 
     # get offset's opacity
     if pc.add_opacity_dist:
-        neural_opacity = pc.get_opacity_mlp(cat_local_view) # [N, k]
+        neural_opacity = (1-dynamicness) * pc.get_opacity_mlp(cat_local_view) + dynamicness * pc.get_opacity_mlp_d(d_cat_local_view) # [N, k]
     else:
-        neural_opacity = pc.get_opacity_mlp(cat_local_view_wodist)
+        neural_opacity = (1-dynamicness) * pc.get_opacity_mlp(cat_local_view_wodist) + dynamicness * pc.get_opacity_mlp_d(d_cat_local_view_wodist) # [N, k]
 
     # opacity mask generation
     neural_opacity = neural_opacity.reshape([-1, 1])
@@ -72,21 +77,21 @@ def generate_neural_gaussians(viewpoint_camera, pc : GaussianModel, visible_mask
     # get offset's color
     if pc.appearance_dim > 0:
         if pc.add_color_dist:
-            color = pc.get_color_mlp(torch.cat([cat_local_view, appearance], dim=1))
+            color = (1-dynamicness) * pc.get_color_mlp(torch.cat([cat_local_view, appearance], dim=1)) + dynamicness * pc.get_color_mlp_d(torch.cat([d_cat_local_view, appearance], dim=1))
         else:
-            color = pc.get_color_mlp(torch.cat([cat_local_view_wodist, appearance], dim=1))
+            color = (1-dynamicness) * pc.get_color_mlp(torch.cat([cat_local_view_wodist, appearance], dim=1)) + dynamicness * pc.get_color_mlp_d(torch.cat([d_cat_local_view_wodist, appearance], dim=1))
     else:
         if pc.add_color_dist:
-            color = pc.get_color_mlp(cat_local_view)
+            color = (1-dynamicness) * pc.get_color_mlp(cat_local_view) + dynamicness * pc.get_color_mlp_d(d_cat_local_view)
         else:
-            color = pc.get_color_mlp(cat_local_view_wodist)
+            color = (1-dynamicness) * pc.get_color_mlp(cat_local_view_wodist) + dynamicness * pc.get_color_mlp_d(d_cat_local_view_wodist)
     color = color.reshape([anchor.shape[0]*pc.n_offsets, 3])# [mask]
 
     # get offset's cov
     if pc.add_cov_dist:
-        scale_rot = pc.get_cov_mlp(cat_local_view)
+        scale_rot = (1-dynamicness) * pc.get_cov_mlp(cat_local_view) + dynamicness * pc.get_cov_mlp_d(d_cat_local_view)
     else:
-        scale_rot = pc.get_cov_mlp(cat_local_view_wodist)
+        scale_rot = (1-dynamicness) * pc.get_cov_mlp(cat_local_view_wodist) + dynamicness * pc.get_cov_mlp_d(d_cat_local_view_wodist)
     scale_rot = scale_rot.reshape([anchor.shape[0]*pc.n_offsets, 7]) # [mask]
     
     # offsets
