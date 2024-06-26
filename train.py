@@ -145,6 +145,8 @@ def training(dataset, opt, pipe, dataset_name, testing_iterations, saving_iterat
         scaling_reg = scaling.prod(dim=1).mean()
         loss = (1.0 - opt.lambda_dssim) * Ll1 + opt.lambda_dssim * ssim_loss + 0.01*scaling_reg
 
+        sparsity_loss = -torch.mean(torch.abs(torch.sigmoid(gaussians._anchor_feat[:,0:1]))) * opt.lambda_sparsity
+
         loss.backward()
         
         iter_end.record()
@@ -160,7 +162,7 @@ def training(dataset, opt, pipe, dataset_name, testing_iterations, saving_iterat
                 progress_bar.close()
 
             # Log and save
-            training_report(tb_writer, dataset_name, iteration, Ll1, loss, l1_loss, iter_start.elapsed_time(iter_end), testing_iterations, scene, render, (pipe, background), wandb, logger)
+            training_report(tb_writer, dataset_name, iteration, Ll1, loss, l1_loss, sparsity_loss, iter_start.elapsed_time(iter_end), testing_iterations, scene, render, (pipe, background), wandb, logger)
             if (iteration in saving_iterations):
                 logger.info("\n[ITER {}] Saving Gaussians".format(iteration))
                 scene.save(iteration)
@@ -209,15 +211,16 @@ def prepare_output_and_logger(args):
         print("Tensorboard not available: not logging progress")
     return tb_writer
 
-def training_report(tb_writer, dataset_name, iteration, Ll1, loss, l1_loss, elapsed, testing_iterations, scene : Scene, renderFunc, renderArgs, wandb=None, logger=None):
+def training_report(tb_writer, dataset_name, iteration, Ll1, loss, l1_loss, sparsity_loss, elapsed, testing_iterations, scene : Scene, renderFunc, renderArgs, wandb=None, logger=None):
     if tb_writer:
         tb_writer.add_scalar(f'{dataset_name}/train_loss_patches/l1_loss', Ll1.item(), iteration)
+        tb_writer.add_scalar(f'{dataset_name}/train_loss_patches/sparsity_loss', sparsity_loss.item(), iteration)
         tb_writer.add_scalar(f'{dataset_name}/train_loss_patches/total_loss', loss.item(), iteration)
         tb_writer.add_scalar(f'{dataset_name}/iter_time', elapsed, iteration)
 
 
     if wandb is not None:
-        wandb.log({"train_l1_loss":Ll1, 'train_total_loss':loss, })
+        wandb.log({"train_l1_loss":Ll1, 'train_sparsity_loss':sparsity_loss, 'train_total_loss':loss, })
     
     # Report test and samples of training set
     if iteration in testing_iterations:
