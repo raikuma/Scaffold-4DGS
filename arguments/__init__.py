@@ -130,6 +130,11 @@ class OptimizationParams(ParamGroup):
         self.mlp_color_lr_final = 0.00005
         self.mlp_color_lr_delay_mult = 0.01
         self.mlp_color_lr_max_steps = 30_000
+
+        self.mlp_time_feature_lr_init = 0.01
+        self.mlp_time_feature_lr_final = 0.00001
+        self.mlp_time_feature_lr_delay_mult = 0.01
+        self.mlp_time_feature_lr_max_steps = 30_000
         
         self.mlp_featurebank_lr_init = 0.01
         self.mlp_featurebank_lr_final = 0.00001
