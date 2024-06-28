@@ -57,7 +57,8 @@ class GaussianModel:
                  add_opacity_dist : bool = False,
                  add_cov_dist : bool = False,
                  add_color_dist : bool = False,
-                 time_dim: int=1
+                 time_dim: int=1,
+                 n_time_layers: int=2
                  ):
 
         self.feat_dim = feat_dim
@@ -129,11 +130,15 @@ class GaussianModel:
             nn.Sigmoid()
         ).cuda()
 
-        self.mlp_time_feature = nn.Sequential(
+        self.mlp_time_feature = nn.Sequential(*([
             nn.Linear(feat_dim+self.time_dim, feat_dim),
-            nn.ReLU(True),
-            nn.Linear(feat_dim, feat_dim),
-        ).cuda()
+        ] + sum([
+            [
+                nn.ReLU(True),
+                nn.Linear(feat_dim, feat_dim),
+            ] for _ in range(time_dim-1)
+        ], [])
+        )).cuda()
 
 
     def eval(self):

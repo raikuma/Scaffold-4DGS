@@ -55,6 +55,7 @@ class ModelParams(ParamGroup):
         self.update_hierachy_factor = 4
         self.time_dim = 1
         self.init_time = 'positional_encoding'
+        self.n_time_layers = 2
 
         self.use_feat_bank = False
         self._source_path = ""
