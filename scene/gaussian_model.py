@@ -779,7 +779,7 @@ class GaussianModel:
             self.mlp_color.train()
 
             self.mlp_time_feature.eval()
-            time_feature_mlp = torch.jit.trace(self.mlp_time_feature, (torch.rand(1, 1).cuda()))
+            time_feature_mlp = torch.jit.trace(self.mlp_time_feature, (torch.rand(1, self.feat_dim+self.time_dim).cuda()))
             time_feature_mlp.save(os.path.join(path, 'time_feature_mlp.pt'))
             self.mlp_time_feature.train()
 
