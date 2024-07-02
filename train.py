@@ -312,7 +312,7 @@ def render_set(model_path, name, iteration, views, gaussians, pipeline, backgrou
 
 
         # gts
-        gt = view.original_image[0:3, :, :]
+        gt = view.original_image[0:3, :, :].cuda()
         
         # error maps
         errormap = (rendering - gt).abs()
