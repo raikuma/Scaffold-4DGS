@@ -214,11 +214,10 @@ def training_report(tb_writer, dataset_name, iteration, Ll1, loss, l1_loss, elap
         tb_writer.add_scalar(f'{dataset_name}/train_loss_patches/l1_loss', Ll1.item(), iteration)
         tb_writer.add_scalar(f'{dataset_name}/train_loss_patches/total_loss', loss.item(), iteration)
         tb_writer.add_scalar(f'{dataset_name}/iter_time', elapsed, iteration)
-        tb_writer.add_scalar(f'{dataset_name}/num_points', scene.gaussians.get_anchor.shape[0], iteration)
 
 
     if wandb is not None:
-        wandb.log({"train_l1_loss":Ll1, 'train_total_loss':loss, })
+        wandb.log({"train_l1_loss":Ll1, 'train_total_loss':loss, 'num_points':scene.gaussians.get_anchor.shape[0]})
     
     # Report test and samples of training set
     if iteration in testing_iterations:
