@@ -32,8 +32,7 @@ def generate_neural_gaussians(viewpoint_camera, pc : GaussianModel, visible_mask
     # view
     ob_view = ob_view / ob_dist
     # time
-    ob_time = torch.tensor(viewpoint_camera.timestamp, device=ob_dist.device, dtype=torch.float32).unsqueeze(dim=0).repeat([ob_dist.shape[0], 1])
-    
+    ob_time = torch.tensor(pc.embed_time(viewpoint_camera.timestamp), device=ob_dist.device, dtype=torch.float32).unsqueeze(dim=0).repeat([ob_dist.shape[0], 1])
 
     ## view-adaptive feature
     if pc.use_feat_bank:

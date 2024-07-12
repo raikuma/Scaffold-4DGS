@@ -57,7 +57,8 @@ class GaussianModel:
                  add_opacity_dist : bool = False,
                  add_cov_dist : bool = False,
                  add_color_dist : bool = False,
-                 time_dim: int=1
+                 time_dim: int=1,
+                 time_embedding : str = None,
                  ):
 
         self.feat_dim = feat_dim
@@ -68,6 +69,7 @@ class GaussianModel:
         self.update_hierachy_factor = update_hierachy_factor
         self.use_feat_bank = use_feat_bank
         self.time_dim = time_dim
+        self.time_embedding = time_embedding
 
         self.appearance_dim = appearance_dim
         self.embedding_appearance = None
@@ -812,3 +814,24 @@ class GaussianModel:
                 self.embedding_appearance.load_state_dict(checkpoint['appearance'])
         else:
             raise NotImplementedError
+
+    def embed_time(self, timestamp):
+        embed = []
+
+        # positional encoding
+        if self.time_embedding == 'positional_encoding':
+            ts = timestamp / 10
+            if self.time_dim % 2 == 1:
+                embed.append(ts)
+            for i in range(self.time_dim // 2):
+                embed.append(np.pi * np.sin(ts * 2**i))
+                embed.append(np.pi * np.cos(ts * 2**i))
+        elif self.time_embedding == 'random':
+            state = np.random.get_state()
+            np.random.seed(int(timestamp*1000))
+            embed = np.random.rand(self.time_dim)
+            np.random.set_state(state)
+        else:
+            embed = [timestamp]
+
+        return embed

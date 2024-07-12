@@ -42,14 +42,14 @@ def render_set(model_path, name, iteration, views, gaussians, pipeline, backgrou
     if not os.path.exists(gts_path):
         os.makedirs(gts_path)
 
-    height, width = views[0].original_image.shape[1:3]
+    height, width = views[0][0].shape[1:3]
     cap = cv2.VideoWriter(video_path, cv2.VideoWriter_fourcc(*'mp4v'), 30, (width, height))
 
     name_list = []
     per_view_dict = {}
     # debug = 0
     t_list = []
-    for idx, view in enumerate(tqdm(views, desc="Rendering progress")):
+    for idx, (viewimg, view) in enumerate(tqdm(views, desc="Rendering progress")):
 
         torch.cuda.synchronize(); t0 = time.time()
         voxel_visible_mask = prefilter_voxel(view, gaussians, pipeline, background)
@@ -61,7 +61,7 @@ def render_set(model_path, name, iteration, views, gaussians, pipeline, backgrou
         rendering = render_pkg["render"]
         img = cv2.cvtColor((rendering.cpu().numpy().transpose(1, 2, 0) * 255).clip(0, 255).astype(np.uint8), cv2.COLOR_RGB2BGR)
         cap.write(img)
-        gt = view.original_image[0:3, :, :]
+        gt = viewimg[0:3, :, :]
         name_list.append('{0:05d}'.format(idx) + ".png")
         torchvision.utils.save_image(rendering, os.path.join(render_path, '{0:05d}'.format(idx) + ".png"))
         torchvision.utils.save_image(gt, os.path.join(gts_path, '{0:05d}'.format(idx) + ".png"))
@@ -78,7 +78,7 @@ def render_set(model_path, name, iteration, views, gaussians, pipeline, backgrou
 def render_sets(dataset : ModelParams, iteration : int, pipeline : PipelineParams, skip_train : bool, skip_test : bool):
     with torch.no_grad():
         gaussians = GaussianModel(dataset.feat_dim, dataset.n_offsets, dataset.voxel_size, dataset.update_depth, dataset.update_init_factor, dataset.update_hierachy_factor, dataset.use_feat_bank, 
-                              dataset.appearance_dim, dataset.ratio, dataset.add_opacity_dist, dataset.add_cov_dist, dataset.add_color_dist, dataset.time_dim)
+                              dataset.appearance_dim, dataset.ratio, dataset.add_opacity_dist, dataset.add_cov_dist, dataset.add_color_dist, dataset.time_dim, dataset.time_embedding)
         scene = Scene(dataset, gaussians, load_iteration=iteration, shuffle=False)
         
         gaussians.eval()

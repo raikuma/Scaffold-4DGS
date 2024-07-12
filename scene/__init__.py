@@ -17,6 +17,7 @@ from scene.dataset_readers import sceneLoadTypeCallbacks
 from scene.gaussian_model import GaussianModel
 from arguments import ModelParams
 from utils.camera_utils import cameraList_from_camInfos, camera_to_JSON
+from utils.data_utils import CameraDataset
 
 class Scene:
 
@@ -29,6 +30,7 @@ class Scene:
         self.model_path = args.model_path
         self.loaded_iter = None
         self.gaussians = gaussians
+        self.white_background = args.white_background
 
         if load_iteration:
             if load_iteration == -1:
@@ -100,7 +102,7 @@ class Scene:
         self.gaussians.save_mlp_checkpoints(point_cloud_path)
 
     def getTrainCameras(self, scale=1.0):
-        return self.train_cameras[scale]
-
+        return CameraDataset(self.train_cameras[scale].copy(), self.white_background)
+        
     def getTestCameras(self, scale=1.0):
-        return self.test_cameras[scale]
+        return CameraDataset(self.test_cameras[scale].copy(), self.white_background)
