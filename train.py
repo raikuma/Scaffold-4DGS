@@ -142,6 +142,8 @@ def training(dataset, opt, pipe, dataset_name, testing_iterations, saving_iterat
             # viewpoint_image, viewpoint_cam = scene.getTrainCameras()[viewpoint_stack.pop(randint(0, len(viewpoint_stack)-1))]
 
             viewpoint_image, viewpoint_cam = batch_data[0]
+            viewpoint_image = viewpoint_image.cuda()
+            viewpoint_cam = viewpoint_cam.cuda()
 
             # Render
             if (iteration - 1) == debug_from:
@@ -252,9 +254,12 @@ def training_report(tb_writer, dataset_name, iteration, Ll1, loss, l1_loss, elap
                     errormap_list = []
 
                 for idx, (viewimg, viewpoint) in enumerate(config['cameras']):
+                    viewimg = viewimg.cuda()
+                    viewpoint = viewpoint.cuda()
+
                     voxel_visible_mask = prefilter_voxel(viewpoint, scene.gaussians, *renderArgs)
                     image = torch.clamp(renderFunc(viewpoint, scene.gaussians, *renderArgs, visible_mask=voxel_visible_mask)["render"], 0.0, 1.0)
-                    gt_image = torch.clamp(viewimg.to("cuda"), 0.0, 1.0)
+                    gt_image = torch.clamp(viewimg, 0.0, 1.0)
                     if tb_writer and (idx < 30):
                         tb_writer.add_images(f'{dataset_name}/'+config['name'] + "_view_{}/render".format(viewpoint.image_name), image[None], global_step=iteration)
                         tb_writer.add_images(f'{dataset_name}/'+config['name'] + "_view_{}/errormap".format(viewpoint.image_name), (gt_image[None]-image[None]).abs(), global_step=iteration)
@@ -308,6 +313,8 @@ def render_set(model_path, name, iteration, views, gaussians, pipeline, backgrou
     name_list = []
     per_view_dict = {}
     for idx, (viewimg, view) in enumerate(tqdm(views, desc="Rendering progress")):
+        viewimg = viewimg.cuda()
+        view = view.cuda()
         
         torch.cuda.synchronize();t_start = time.time()
         
@@ -326,7 +333,7 @@ def render_set(model_path, name, iteration, views, gaussians, pipeline, backgrou
 
 
         # gts
-        gt = viewimg[0:3, :, :].cuda()
+        gt = viewimg[0:3, :, :]
         
         # error maps
         errormap = (rendering - gt).abs()

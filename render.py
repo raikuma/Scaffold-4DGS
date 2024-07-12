@@ -50,6 +50,7 @@ def render_set(model_path, name, iteration, views, gaussians, pipeline, backgrou
     # debug = 0
     t_list = []
     for idx, (viewimg, view) in enumerate(tqdm(views, desc="Rendering progress")):
+        view = view.cuda()
 
         torch.cuda.synchronize(); t0 = time.time()
         voxel_visible_mask = prefilter_voxel(view, gaussians, pipeline, background)
