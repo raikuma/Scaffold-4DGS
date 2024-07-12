@@ -30,14 +30,20 @@ from utils.general_utils import safe_state
 from argparse import ArgumentParser
 from arguments import ModelParams, PipelineParams, get_combined_args
 from gaussian_renderer import GaussianModel
+import cv2
+import numpy as np
 
 def render_set(model_path, name, iteration, views, gaussians, pipeline, background):
     render_path = os.path.join(model_path, name, "ours_{}".format(iteration), "renders")
     gts_path = os.path.join(model_path, name, "ours_{}".format(iteration), "gt")
+    video_path = os.path.join(model_path, name, "ours_{}".format(iteration), "renders.mp4")
     if not os.path.exists(render_path):
         os.makedirs(render_path)
     if not os.path.exists(gts_path):
         os.makedirs(gts_path)
+
+    height, width = views[0].original_image.shape[1:3]
+    cap = cv2.VideoWriter(video_path, cv2.VideoWriter_fourcc(*'mp4v'), 30, (width, height))
 
     name_list = []
     per_view_dict = {}
@@ -53,10 +59,14 @@ def render_set(model_path, name, iteration, views, gaussians, pipeline, backgrou
         t_list.append(t1-t0)
 
         rendering = render_pkg["render"]
+        img = cv2.cvtColor((rendering.cpu().numpy().transpose(1, 2, 0) * 255).clip(0, 255).astype(np.uint8), cv2.COLOR_RGB2BGR)
+        cap.write(img)
         gt = view.original_image[0:3, :, :]
         name_list.append('{0:05d}'.format(idx) + ".png")
         torchvision.utils.save_image(rendering, os.path.join(render_path, '{0:05d}'.format(idx) + ".png"))
         torchvision.utils.save_image(gt, os.path.join(gts_path, '{0:05d}'.format(idx) + ".png"))
+
+    cap.release()
 
     t = np.array(t_list[5:])
     fps = 1.0 / t.mean()
