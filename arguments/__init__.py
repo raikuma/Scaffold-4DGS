@@ -55,6 +55,7 @@ class ModelParams(ParamGroup):
         self.update_hierachy_factor = 4
         self.time_dim = 1
         self.time_embedding = 'positional_encoding'
+        self.data_mode = ''
 
         self.use_feat_bank = False
         self._source_path = ""
