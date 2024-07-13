@@ -231,8 +231,8 @@ def readCamerasFromTransforms(args, path, transformsfile, white_background, exte
         timestamp = frame.get('time', 0.0)
         if frame_ratio > 1:
             timestamp /= frame_ratio
-        if time_duration is not None and 'time' in frame:
-            if timestamp < time_duration[0] or timestamp > time_duration[1]:
+        if args.time_duration is not None and 'time' in frame:
+            if timestamp < args.time_duration[0] or timestamp > args.time_duration[1]:
                 return
 
         cam_name = os.path.join(path, frame["file_path"] + extension)

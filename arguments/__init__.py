@@ -67,6 +67,7 @@ class ModelParams(ParamGroup):
         self.eval = False
         self.lod = 0
         self.dataloader = False
+        self.time_duration = [0.0, 10.0]
 
         self.appearance_dim = 32
         self.lowpoly = False
