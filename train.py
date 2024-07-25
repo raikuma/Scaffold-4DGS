@@ -167,6 +167,8 @@ def training(dataset, opt, pipe, dataset_name, testing_iterations, saving_iterat
             iter_end.record()
 
             with torch.no_grad():
+                misc = {}
+
                 # Progress bar
                 ema_loss_for_log = 0.4 * loss.item() + 0.6 * ema_loss_for_log
 
@@ -176,8 +178,7 @@ def training(dataset, opt, pipe, dataset_name, testing_iterations, saving_iterat
                 if iteration == opt.iterations:
                     progress_bar.close()
 
-                # Log and save
-                training_report(tb_writer, dataset_name, iteration, Ll1, loss, l1_loss, iter_start.elapsed_time(iter_end), testing_iterations, scene, render, (pipe, background), wandb, logger)
+                # Save
                 if (iteration in saving_iterations):
                     logger.info("\n[ITER {}] Saving Gaussians".format(iteration))
                     scene.save(iteration)
@@ -189,12 +190,17 @@ def training(dataset, opt, pipe, dataset_name, testing_iterations, saving_iterat
                     
                     # densification
                     if iteration > opt.update_from and iteration % opt.update_interval == 0:
-                        gaussians.adjust_anchor(check_interval=opt.update_interval, success_threshold=opt.success_threshold, grad_threshold=opt.densify_grad_threshold, min_opacity=opt.min_opacity)
+                        num_inc, num_dec = gaussians.adjust_anchor(check_interval=opt.update_interval, success_threshold=opt.success_threshold, grad_threshold=opt.densify_grad_threshold, min_opacity=opt.min_opacity)
+                        misc['num_inc'] = num_inc
+                        misc['num_dec'] = num_dec
                 elif iteration == opt.update_until:
                     del gaussians.opacity_accum
                     del gaussians.offset_gradient_accum
                     del gaussians.offset_denom
                     torch.cuda.empty_cache()
+
+                # Log
+                training_report(tb_writer, dataset_name, iteration, Ll1, loss, l1_loss, iter_start.elapsed_time(iter_end), testing_iterations, scene, render, (pipe, background), misc, wandb, logger)
                         
                 # Optimizer step
                 if iteration < opt.iterations:
@@ -226,7 +232,7 @@ def prepare_output_and_logger(args):
         print("Tensorboard not available: not logging progress")
     return tb_writer
 
-def training_report(tb_writer, dataset_name, iteration, Ll1, loss, l1_loss, elapsed, testing_iterations, scene : Scene, renderFunc, renderArgs, wandb=None, logger=None):
+def training_report(tb_writer, dataset_name, iteration, Ll1, loss, l1_loss, elapsed, testing_iterations, scene : Scene, renderFunc, renderArgs, misc, wandb=None, logger=None):
     if tb_writer:
         tb_writer.add_scalar(f'{dataset_name}/train_loss_patches/l1_loss', Ll1.item(), iteration)
         tb_writer.add_scalar(f'{dataset_name}/train_loss_patches/total_loss', loss.item(), iteration)
@@ -234,7 +240,8 @@ def training_report(tb_writer, dataset_name, iteration, Ll1, loss, l1_loss, elap
 
 
     if wandb is not None:
-        wandb.log({"train_l1_loss":Ll1, 'train_total_loss':loss, 'num_points':scene.gaussians.get_anchor.shape[0]})
+        misc.update({'train_l1_loss':Ll1, 'train_total_loss':loss, 'num_points':scene.gaussians.get_anchor.shape[0]})
+        wandb.log(misc)
     
     # Report test and samples of training set
     if iteration in testing_iterations:

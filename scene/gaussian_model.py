@@ -679,6 +679,8 @@ class GaussianModel:
                 self._anchor_feat = optimizable_tensors["anchor_feat"]
                 self._offset = optimizable_tensors["offset"]
                 self._opacity = optimizable_tensors["opacity"]
+
+        return (self.get_anchor.shape[0]*self.n_offsets - init_length) // self.n_offsets
                 
 
 
@@ -689,7 +691,7 @@ class GaussianModel:
         grads_norm = torch.norm(grads, dim=-1)
         offset_mask = (self.offset_denom > check_interval*success_threshold*0.5).squeeze(dim=1)
         
-        self.anchor_growing(grads_norm, grad_threshold, offset_mask)
+        num_increase = self.anchor_growing(grads_norm, grad_threshold, offset_mask)
         
         # update offset_denom
         self.offset_denom[offset_mask] = 0
@@ -737,6 +739,9 @@ class GaussianModel:
             self.prune_anchor(prune_mask)
         
         self.max_radii2D = torch.zeros((self.get_anchor.shape[0]), device="cuda")
+
+        num_decrease = prune_mask.shape[0]
+        return num_increase, num_decrease
 
     def save_mlp_checkpoints(self, path, mode = 'split'):#split or unite
         mkdir_p(os.path.dirname(path))
