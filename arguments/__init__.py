@@ -119,6 +119,11 @@ class OptimizationParams(ParamGroup):
         self.mlp_opacity_lr_delay_mult = 0.01
         self.mlp_opacity_lr_max_steps = 30_000
 
+        self.mlp_marginal_lr_init = 0.002
+        self.mlp_marginal_lr_final = 0.00002  
+        self.mlp_marginal_lr_delay_mult = 0.01
+        self.mlp_marginal_lr_max_steps = 30_000
+
         self.mlp_cov_lr_init = 0.004
         self.mlp_cov_lr_final = 0.004
         self.mlp_cov_lr_delay_mult = 0.01

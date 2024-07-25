@@ -49,6 +49,7 @@ def generate_neural_gaussians(viewpoint_camera, pc : GaussianModel, visible_mask
 
     cat_local_view = torch.cat([feat, ob_view, ob_dist, ob_time], dim=1) # [N, c+3+1+time_dim]
     cat_local_view_wodist = torch.cat([feat, ob_view, ob_time], dim=1) # [N, c+3+time_dim]
+    cat_local_time = torch.cat([feat, ob_time], dim=1) # [N, c+time_dim]
     if pc.appearance_dim > 0:
         camera_indicies = torch.ones_like(cat_local_view[:,0], dtype=torch.long, device=ob_dist.device) * viewpoint_camera.uid
         # camera_indicies = torch.ones_like(cat_local_view[:,0], dtype=torch.long, device=ob_dist.device) * 10
@@ -56,9 +57,10 @@ def generate_neural_gaussians(viewpoint_camera, pc : GaussianModel, visible_mask
 
     # get offset's opacity
     if pc.add_opacity_dist:
-        neural_opacity = pc.get_opacity_mlp(cat_local_view) # [N, k]
+        neural_opacity = pc.get_opacity_mlp(feat) # [N, k]
     else:
-        neural_opacity = pc.get_opacity_mlp(cat_local_view_wodist)
+        neural_opacity = pc.get_opacity_mlp(feat)
+
 
     # opacity mask generation
     neural_opacity = neural_opacity.reshape([-1, 1])
@@ -67,6 +69,9 @@ def generate_neural_gaussians(viewpoint_camera, pc : GaussianModel, visible_mask
 
     # select opacity 
     opacity = neural_opacity[mask]
+
+    marignal = pc.get_marginal_mlp(cat_local_time).reshape([-1, 1])
+    opacity = opacity * marignal[mask]
 
     # get offset's color
     if pc.appearance_dim > 0:
@@ -83,9 +88,9 @@ def generate_neural_gaussians(viewpoint_camera, pc : GaussianModel, visible_mask
 
     # get offset's cov
     if pc.add_cov_dist:
-        scale_rot = pc.get_cov_mlp(cat_local_view)
+        scale_rot = pc.get_cov_mlp(feat)
     else:
-        scale_rot = pc.get_cov_mlp(cat_local_view_wodist)
+        scale_rot = pc.get_cov_mlp(feat)
     scale_rot = scale_rot.reshape([anchor.shape[0]*pc.n_offsets, 7]) # [mask]
     
     # offsets

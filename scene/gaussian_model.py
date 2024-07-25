@@ -109,16 +109,23 @@ class GaussianModel:
 
         self.opacity_dist_dim = 1 if self.add_opacity_dist else 0
         self.mlp_opacity = nn.Sequential(
-            nn.Linear(feat_dim+3+self.opacity_dist_dim+self.time_dim, feat_dim),
+            nn.Linear(feat_dim, feat_dim),
             nn.ReLU(True),
             nn.Linear(feat_dim, n_offsets),
             nn.Tanh()
         ).cuda()
 
+        self.mlp_marginal = nn.Sequential(
+            nn.Linear(feat_dim+time_dim, feat_dim),
+            nn.ReLU(True),
+            nn.Linear(feat_dim, n_offsets),
+            nn.Sigmoid()
+        ).cuda()
+
         self.add_cov_dist = add_cov_dist
         self.cov_dist_dim = 1 if self.add_cov_dist else 0
         self.mlp_cov = nn.Sequential(
-            nn.Linear(feat_dim+3+self.cov_dist_dim+self.time_dim, feat_dim),
+            nn.Linear(feat_dim, feat_dim),
             nn.ReLU(True),
             nn.Linear(feat_dim, 7*self.n_offsets),
         ).cuda()
@@ -134,6 +141,7 @@ class GaussianModel:
 
     def eval(self):
         self.mlp_opacity.eval()
+        self.mlp_marginal.eval()
         self.mlp_cov.eval()
         self.mlp_color.eval()
         if self.appearance_dim > 0:
@@ -143,6 +151,7 @@ class GaussianModel:
 
     def train(self):
         self.mlp_opacity.train()
+        self.mlp_marginal.train()
         self.mlp_cov.train()
         self.mlp_color.train()
         if self.appearance_dim > 0:
@@ -200,6 +209,10 @@ class GaussianModel:
     def get_opacity_mlp(self):
         return self.mlp_opacity
     
+    @property
+    def get_marginal_mlp(self):
+        return self.mlp_marginal
+
     @property
     def get_cov_mlp(self):
         return self.mlp_cov
@@ -297,6 +310,7 @@ class GaussianModel:
                 {'params': [self._rotation], 'lr': training_args.rotation_lr, "name": "rotation"},
                 
                 {'params': self.mlp_opacity.parameters(), 'lr': training_args.mlp_opacity_lr_init, "name": "mlp_opacity"},
+                {'params': self.mlp_marginal.parameters(), 'lr': training_args.mlp_marginal_lr_init, "name": "mlp_marginal"},
                 {'params': self.mlp_feature_bank.parameters(), 'lr': training_args.mlp_featurebank_lr_init, "name": "mlp_featurebank"},
                 {'params': self.mlp_cov.parameters(), 'lr': training_args.mlp_cov_lr_init, "name": "mlp_cov"},
                 {'params': self.mlp_color.parameters(), 'lr': training_args.mlp_color_lr_init, "name": "mlp_color"},
@@ -312,6 +326,7 @@ class GaussianModel:
                 {'params': [self._rotation], 'lr': training_args.rotation_lr, "name": "rotation"},
 
                 {'params': self.mlp_opacity.parameters(), 'lr': training_args.mlp_opacity_lr_init, "name": "mlp_opacity"},
+                {'params': self.mlp_marginal.parameters(), 'lr': training_args.mlp_marginal_lr_init, "name": "mlp_marginal"},
                 {'params': self.mlp_cov.parameters(), 'lr': training_args.mlp_cov_lr_init, "name": "mlp_cov"},
                 {'params': self.mlp_color.parameters(), 'lr': training_args.mlp_color_lr_init, "name": "mlp_color"},
                 {'params': self.embedding_appearance.parameters(), 'lr': training_args.appearance_lr_init, "name": "embedding_appearance"},
@@ -326,6 +341,7 @@ class GaussianModel:
                 {'params': [self._rotation], 'lr': training_args.rotation_lr, "name": "rotation"},
 
                 {'params': self.mlp_opacity.parameters(), 'lr': training_args.mlp_opacity_lr_init, "name": "mlp_opacity"},
+                {'params': self.mlp_marginal.parameters(), 'lr': training_args.mlp_marginal_lr_init, "name": "mlp_margin"},
                 {'params': self.mlp_cov.parameters(), 'lr': training_args.mlp_cov_lr_init, "name": "mlp_cov"},
                 {'params': self.mlp_color.parameters(), 'lr': training_args.mlp_color_lr_init, "name": "mlp_color"},
             ]
@@ -345,6 +361,11 @@ class GaussianModel:
                                                     lr_delay_mult=training_args.mlp_opacity_lr_delay_mult,
                                                     max_steps=training_args.mlp_opacity_lr_max_steps)
         
+        self.mlp_marginal_scheduler_args = get_expon_lr_func(lr_init=training_args.mlp_marginal_lr_init,
+                                                    lr_final=training_args.mlp_marginal_lr_final,
+                                                    lr_delay_mult=training_args.mlp_marginal_lr_delay_mult,
+                                                    max_steps=training_args.mlp_marginal_lr_max_steps)
+
         self.mlp_cov_scheduler_args = get_expon_lr_func(lr_init=training_args.mlp_cov_lr_init,
                                                     lr_final=training_args.mlp_cov_lr_final,
                                                     lr_delay_mult=training_args.mlp_cov_lr_delay_mult,
@@ -376,6 +397,9 @@ class GaussianModel:
                 param_group['lr'] = lr
             if param_group["name"] == "mlp_opacity":
                 lr = self.mlp_opacity_scheduler_args(iteration)
+                param_group['lr'] = lr
+            if param_group["name"] == "mlp_marginal":
+                lr = self.mlp_marginal_scheduler_args(iteration)
                 param_group['lr'] = lr
             if param_group["name"] == "mlp_cov":
                 lr = self.mlp_cov_scheduler_args(iteration)
@@ -747,12 +771,17 @@ class GaussianModel:
         mkdir_p(os.path.dirname(path))
         if mode == 'split':
             self.mlp_opacity.eval()
-            opacity_mlp = torch.jit.trace(self.mlp_opacity, (torch.rand(1, self.feat_dim+3+self.opacity_dist_dim+self.time_dim).cuda()))
+            opacity_mlp = torch.jit.trace(self.mlp_opacity, (torch.rand(1, self.feat_dim).cuda()))
             opacity_mlp.save(os.path.join(path, 'opacity_mlp.pt'))
             self.mlp_opacity.train()
 
+            self.mlp_marginal.eval()
+            marginal_mlp = torch.jit.trace(self.mlp_marginal, (torch.rand(1, self.feat_dim+self.time_dim).cuda()))
+            marginal_mlp.save(os.path.join(path, 'marginal_mlp.pt'))
+            self.mlp_marginal.train()
+
             self.mlp_cov.eval()
-            cov_mlp = torch.jit.trace(self.mlp_cov, (torch.rand(1, self.feat_dim+3+self.cov_dist_dim+self.time_dim).cuda()))
+            cov_mlp = torch.jit.trace(self.mlp_cov, (torch.rand(1, self.feat_dim).cuda()))
             cov_mlp.save(os.path.join(path, 'cov_mlp.pt'))
             self.mlp_cov.train()
 
@@ -777,6 +806,7 @@ class GaussianModel:
             if self.use_feat_bank:
                 torch.save({
                     'opacity_mlp': self.mlp_opacity.state_dict(),
+                    'marginal_mlp': self.mlp_marginal.state_dict(),
                     'cov_mlp': self.mlp_cov.state_dict(),
                     'color_mlp': self.mlp_color.state_dict(),
                     'feature_bank_mlp': self.mlp_feature_bank.state_dict(),
@@ -785,6 +815,7 @@ class GaussianModel:
             elif self.appearance_dim > 0:
                 torch.save({
                     'opacity_mlp': self.mlp_opacity.state_dict(),
+                    'marginal_mlp': self.mlp_marginal.state_dict(),
                     'cov_mlp': self.mlp_cov.state_dict(),
                     'color_mlp': self.mlp_color.state_dict(),
                     'appearance': self.embedding_appearance.state_dict()
@@ -792,6 +823,7 @@ class GaussianModel:
             else:
                 torch.save({
                     'opacity_mlp': self.mlp_opacity.state_dict(),
+                    'marginal_mlp': self.mlp_marginal.state_dict(),
                     'cov_mlp': self.mlp_cov.state_dict(),
                     'color_mlp': self.mlp_color.state_dict(),
                     }, os.path.join(path, 'checkpoints.pth'))
@@ -802,6 +834,7 @@ class GaussianModel:
     def load_mlp_checkpoints(self, path, mode = 'split'):#split or unite
         if mode == 'split':
             self.mlp_opacity = torch.jit.load(os.path.join(path, 'opacity_mlp.pt')).cuda()
+            self.mlp_marginal = torch.jit.load(os.path.join(path, 'marginal_mlp.pt')).cuda()
             self.mlp_cov = torch.jit.load(os.path.join(path, 'cov_mlp.pt')).cuda()
             self.mlp_color = torch.jit.load(os.path.join(path, 'color_mlp.pt')).cuda()
             if self.use_feat_bank:
@@ -811,6 +844,7 @@ class GaussianModel:
         elif mode == 'unite':
             checkpoint = torch.load(os.path.join(path, 'checkpoints.pth'))
             self.mlp_opacity.load_state_dict(checkpoint['opacity_mlp'])
+            self.mlp_marginal.load_state_dict(checkpoint['marginal_mlp'])
             self.mlp_cov.load_state_dict(checkpoint['cov_mlp'])
             self.mlp_color.load_state_dict(checkpoint['color_mlp'])
             if self.use_feat_bank:
