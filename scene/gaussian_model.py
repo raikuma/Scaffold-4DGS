@@ -740,7 +740,7 @@ class GaussianModel:
         
         self.max_radii2D = torch.zeros((self.get_anchor.shape[0]), device="cuda")
 
-        num_decrease = prune_mask.shape[0]
+        num_decrease = prune_mask[prune_mask].shape[0]
         return num_increase, num_decrease
 
     def save_mlp_checkpoints(self, path, mode = 'split'):#split or unite
