@@ -153,6 +153,7 @@ def training(dataset, opt, pipe, dataset_name, testing_iterations, saving_iterat
             render_pkg = render(viewpoint_cam, gaussians, pipe, background, visible_mask=voxel_visible_mask, retain_grad=retain_grad)
             
             image, viewspace_point_tensor, visibility_filter, offset_selection_mask, radii, scaling, opacity = render_pkg["render"], render_pkg["viewspace_points"], render_pkg["visibility_filter"], render_pkg["selection_mask"], render_pkg["radii"], render_pkg["scaling"], render_pkg["neural_opacity"]
+            marginal = render_pkg["marginal"]
 
             # gt_image = viewpoint_cam.original_image.cuda()
             gt_image = viewpoint_image.cuda()
@@ -161,6 +162,12 @@ def training(dataset, opt, pipe, dataset_name, testing_iterations, saving_iterat
             ssim_loss = (1.0 - ssim(image, gt_image))
             scaling_reg = scaling.prod(dim=1).mean()
             loss = (1.0 - opt.lambda_dssim) * Ll1 + opt.lambda_dssim * ssim_loss + 0.01*scaling_reg
+
+            _o = (opacity+1)*0.5 + 1e-6
+            loss += -(_o*torch.log(_o)).mean() * 0.01
+
+            _m = marginal
+            loss += -(_m*torch.log(_m)).mean() * 0.01
 
             loss.backward()
             
@@ -502,10 +509,10 @@ if __name__ == "__main__":
     parser.add_argument('--detect_anomaly', action='store_true', default=False)
     parser.add_argument('--warmup', action='store_true', default=False)
     parser.add_argument('--use_wandb', action='store_true', default=False)
-    # parser.add_argument("--test_iterations", nargs="+", type=int, default=[3_000, 7_000, 30_000])
-    # parser.add_argument("--save_iterations", nargs="+", type=int, default=[3_000, 7_000, 30_000])
-    parser.add_argument("--test_iterations", nargs="+", type=int, default=[30_000])
-    parser.add_argument("--save_iterations", nargs="+", type=int, default=[30_000])
+    parser.add_argument("--test_iterations", nargs="+", type=int, default=[3_000, 7_000, 15_000, 30_000])
+    parser.add_argument("--save_iterations", nargs="+", type=int, default=[3_000, 7_000, 15_000, 30_000])
+    # parser.add_argument("--test_iterations", nargs="+", type=int, default=[30_000])
+    # parser.add_argument("--save_iterations", nargs="+", type=int, default=[30_000])
     parser.add_argument("--quiet", action="store_true")
     parser.add_argument("--checkpoint_iterations", nargs="+", type=int, default=[])
     parser.add_argument("--start_checkpoint", type=str, default = None)

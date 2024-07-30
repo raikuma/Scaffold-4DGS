@@ -37,10 +37,13 @@ def render_set(model_path, name, iteration, views, gaussians, pipeline, backgrou
     render_path = os.path.join(model_path, name, "ours_{}".format(iteration), "renders")
     gts_path = os.path.join(model_path, name, "ours_{}".format(iteration), "gt")
     video_path = os.path.join(model_path, name, "ours_{}".format(iteration), "renders.mp4")
+    hist_path = os.path.join(model_path, name, "ours_{}".format(iteration), "hist")
     if not os.path.exists(render_path):
         os.makedirs(render_path)
     if not os.path.exists(gts_path):
         os.makedirs(gts_path)
+    if not os.path.exists(hist_path):
+        os.makedirs(hist_path)
 
     height, width = views[0][0].shape[1:3]
     cap = cv2.VideoWriter(video_path, cv2.VideoWriter_fourcc(*'mp4v'), 30, (width, height))
@@ -66,6 +69,47 @@ def render_set(model_path, name, iteration, views, gaussians, pipeline, backgrou
         name_list.append('{0:05d}'.format(idx) + ".png")
         torchvision.utils.save_image(rendering, os.path.join(render_path, '{0:05d}'.format(idx) + ".png"))
         torchvision.utils.save_image(gt, os.path.join(gts_path, '{0:05d}'.format(idx) + ".png"))
+
+        import matplotlib.pyplot as plt
+        data1 = render_pkg["neural_opacity"]
+        data2 = render_pkg["marginal"]
+        data3 = render_pkg["opacity"]
+
+        # Convert tensors to numpy arrays for plotting
+        data1_np = data1.cpu().numpy().flatten()
+        data2_np = data2.cpu().numpy().flatten()
+        data3_np = data3.cpu().numpy().flatten()
+
+        # Plotting histograms side by side
+        fig, axs = plt.subplots(1, 3, figsize=(30, 6), sharey=True)
+
+        # Plotting the first histogram
+        axs[0].hist(data1_np, bins=100, alpha=0.75, color='blue')
+        axs[0].set_title('Histogram of Torch Tensor Data 1')
+        axs[0].set_xlabel('Neural Opacity')
+        axs[0].set_ylabel('Frequency')
+        axs[0].set_ylim(0, 400000)  # Set y-axis range
+        axs[0].grid(True)
+
+        # Plotting the second histogram
+        axs[1].hist(data2_np, bins=100, alpha=0.75, color='green')
+        axs[1].set_title('Histogram of Torch Tensor Data 2')
+        axs[1].set_xlabel('Marginal')
+        axs[0].set_ylim(0, 400000)  # Set y-axis range
+        axs[1].grid(True)
+
+        # Plotting the third histogram
+        axs[2].hist(data3_np, bins=100, alpha=0.75, color='red')
+        axs[2].set_title('Histogram of Torch Tensor Data 3')
+        axs[2].set_xlabel('Opacity')
+        axs[0].set_ylim(0, 400000)  # Set y-axis range
+        axs[2].grid(True)
+
+        # Save the plot as an image file
+        plt.savefig(os.path.join(hist_path, '{0:05d}'.format(idx) + ".png"))
+        plt.close()
+
+        # import pdb; pdb.set_trace()
 
     cap.release()
 
@@ -104,6 +148,7 @@ if __name__ == "__main__":
     parser.add_argument("--skip_train", action="store_true")
     parser.add_argument("--skip_test", action="store_true")
     parser.add_argument("--quiet", action="store_true")
+    parser.add_argument("--num_workers", type=int, default=0)
     args = get_combined_args(parser)
     print("Rendering " + args.model_path)
 

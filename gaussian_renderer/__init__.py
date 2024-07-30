@@ -70,8 +70,8 @@ def generate_neural_gaussians(viewpoint_camera, pc : GaussianModel, visible_mask
     # select opacity 
     opacity = neural_opacity[mask]
 
-    marignal = pc.get_marginal_mlp(cat_local_time).reshape([-1, 1])
-    opacity = opacity * marignal[mask]
+    marginal = pc.get_marginal_mlp(cat_local_time).reshape([-1, 1])
+    opacity = opacity * marginal[mask]
 
     # get offset's color
     if pc.appearance_dim > 0:
@@ -112,9 +112,9 @@ def generate_neural_gaussians(viewpoint_camera, pc : GaussianModel, visible_mask
     xyz = repeat_anchor + offsets
 
     if is_training:
-        return xyz, color, opacity, scaling, rot, neural_opacity, mask
+        return xyz, color, opacity, scaling, rot, neural_opacity, mask, marginal
     else:
-        return xyz, color, opacity, scaling, rot
+        return xyz, color, opacity, scaling, rot, neural_opacity, marginal[mask]
 
 def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, scaling_modifier = 1.0, visible_mask=None, retain_grad=False):
     """
@@ -125,9 +125,9 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
     is_training = pc.get_color_mlp.training
         
     if is_training:
-        xyz, color, opacity, scaling, rot, neural_opacity, mask = generate_neural_gaussians(viewpoint_camera, pc, visible_mask, is_training=is_training)
+        xyz, color, opacity, scaling, rot, neural_opacity, mask, marginal = generate_neural_gaussians(viewpoint_camera, pc, visible_mask, is_training=is_training)
     else:
-        xyz, color, opacity, scaling, rot = generate_neural_gaussians(viewpoint_camera, pc, visible_mask, is_training=is_training)
+        xyz, color, opacity, scaling, rot, neural_opacity, marginal = generate_neural_gaussians(viewpoint_camera, pc, visible_mask, is_training=is_training)
     
 
     # Create zero tensor. We will use it to make pytorch return gradients of the 2D (screen-space) means
@@ -180,12 +180,16 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
                 "selection_mask": mask,
                 "neural_opacity": neural_opacity,
                 "scaling": scaling,
+                "marginal": marginal,
                 }
     else:
         return {"render": rendered_image,
                 "viewspace_points": screenspace_points,
                 "visibility_filter" : radii > 0,
                 "radii": radii,
+                "opacity": opacity,
+                "neural_opacity": neural_opacity,
+                "marginal": marginal,
                 }
 
 
