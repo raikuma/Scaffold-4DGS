@@ -54,7 +54,8 @@ class ModelParams(ParamGroup):
         self.update_init_factor = 16
         self.update_hierachy_factor = 4
         self.time_dim = 1
-        self.init_time = 'positional_encoding'
+        self.time_embedding = 'positional_encoding'
+        self.data_mode = ''
 
         self.use_feat_bank = False
         self._source_path = ""
@@ -65,6 +66,8 @@ class ModelParams(ParamGroup):
         self.data_device = "cuda"
         self.eval = False
         self.lod = 0
+        self.dataloader = False
+        self.time_duration = [0.0, 10.0]
 
         self.appearance_dim = 32
         self.lowpoly = False

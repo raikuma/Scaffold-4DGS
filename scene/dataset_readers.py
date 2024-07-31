@@ -16,6 +16,7 @@ from PIL import Image
 from tqdm import tqdm
 from typing import NamedTuple
 from multiprocessing import Pool, cpu_count
+from multiprocessing.pool import ThreadPool
 from colorama import Fore, init, Style
 from scene.colmap_loader import read_extrinsics_text, read_intrinsics_text, qvec2rotmat, \
     read_extrinsics_binary, read_intrinsics_binary, read_points3D_binary, read_points3D_text
@@ -31,6 +32,7 @@ except:
 from utils.sh_utils import SH2RGB
 from scene.gaussian_model import BasicPointCloud
 import cv2
+import imagesize
 
 
 class CameraInfo(NamedTuple):
@@ -40,11 +42,16 @@ class CameraInfo(NamedTuple):
     FovY: np.array
     FovX: np.array
     image: np.array
+    depth: np.array
     image_path: str
     image_name: str
     width: int
     height: int
     timestamp: float = 0.0
+    fl_x: float = -1.0
+    fl_y: float = -1.0
+    cx: float = -1.0
+    cy: float = -1.0
 
 class SceneInfo(NamedTuple):
     point_cloud: BasicPointCloud
@@ -208,108 +215,111 @@ def readColmapSceneInfo(args, path, images, eval, lod, llffhold=8):
                            ply_path=ply_path)
     return scene_info
 
-def readCamerasFromTransforms(args, path, transformsfile, white_background, extension=".png", is_debug=False, undistorted=False):
+def readCamerasFromTransforms(args, path, transformsfile, white_background, extension=".png", is_debug=False, time_duration=None, frame_ratio=1):
     cam_infos = []
+
     with open(os.path.join(path, transformsfile)) as json_file:
         contents = json.load(json_file)
-        try:
-            fovx = contents["camera_angle_x"]
-        except:
-            fovx = None
-
-        frames = contents["frames"]
-        # check if filename already contain postfix
-        if frames[0]["file_path"].split('.')[-1] in ['jpg', 'jpeg', 'JPG', 'png']:
-            extension = ""
-
-        c2ws = np.array([frame["transform_matrix"] for frame in frames])
+    if "camera_angle_x" in contents:
+        fovx = contents["camera_angle_x"]
         
-        Ts = c2ws[:,:3,3]
+    frames = contents["frames"]
+    tbar = tqdm(range(len(frames)))
+    def frame_read_fn(idx_frame):
+        idx = idx_frame[0]
+        frame = idx_frame[1]
+        timestamp = frame.get('time', 0.0)
+        if frame_ratio > 1:
+            timestamp /= frame_ratio
+        if args.time_duration is not None and 'time' in frame:
+            if timestamp < args.time_duration[0] or timestamp > args.time_duration[1]:
+                return
 
-        ct = 0
+        cam_name = os.path.join(path, frame["file_path"] + extension)
 
-        progress_bar = tqdm(frames, desc="Loading dataset")
+        # NeRF 'transform_matrix' is a camera-to-world transform
+        c2w = np.array(frame["transform_matrix"])
+        # change from OpenGL/Blender camera axes (Y up, Z back) to COLMAP (Y down, Z forward)
+        c2w[:3, 1:3] *= -1
 
-        for idx, frame in enumerate(frames):
-            cam_name = os.path.join(path, frame["file_path"] + extension)
-            if not os.path.exists(cam_name):
-                continue
-            # NeRF 'transform_matrix' is a camera-to-world transform
-            c2w = np.array(frame["transform_matrix"])
-            timestamp = frame["time"]
-            
-            if idx % 10 == 0:
-                progress_bar.set_postfix({"num": Fore.YELLOW+f"{ct}/{len(frames)}"+Style.RESET_ALL})
-                progress_bar.update(10)
-            if idx == len(frames) - 1:
-                progress_bar.close()
-            
-            ct += 1
+        # get the world-to-camera transform and set R, T
+        w2c = np.linalg.inv(c2w)
+        R = np.transpose(w2c[:3,:3])  # R is stored transposed due to 'glm' in CUDA code
+        T = w2c[:3, 3]
 
-            if timestamp > 1.0:
-                continue
+        image_path = os.path.join(path, cam_name) # .replace('hdImgs_unditorted', 'hdImgs_unditorted_rgba').replace('.jpg', '.png')
+        image_name = Path(cam_name).stem
+        
+        if not args.dataloader:
+            with Image.open(image_path) as image_load:
+                im_data = np.array(image_load.convert("RGBA"))
 
-            # change from OpenGL/Blender camera axes (Y up, Z back) to COLMAP (Y down, Z forward)
-            c2w[:3, 1:3] *= -1
-            if "small_city_img" in path:
-                c2w[-1,-1] = 1
+            bg = np.array([1,1,1]) if white_background else np.array([0, 0, 0])
 
-            # get the world-to-camera transform and set R, T
-            w2c = np.linalg.inv(c2w)
-
-            R = np.transpose(w2c[:3,:3])  # R is stored transposed due to 'glm' in CUDA code
-            T = w2c[:3, 3]
-
-            image_path = os.path.join(path, cam_name)
-            image_name = Path(cam_name).stem
-            image = Image.open(image_path)
-
-            if undistorted:
-                mtx = np.array(
-                    [
-                        [frame["fl_x"], 0, frame["cx"]],
-                        [0, frame["fl_y"], frame["cy"]],
-                        [0, 0, 1.0],
-                    ],
-                    dtype=np.float32,
-                )
-                dist = np.array([frame["k1"], frame["k2"], frame["p1"], frame["p2"], frame["k3"]], dtype=np.float32)
-                im_data = np.array(image.convert("RGB"))
-                arr = cv2.undistort(im_data / 255.0, mtx, dist, None, mtx)
-                image = Image.fromarray(np.array(arr*255.0, dtype=np.byte), "RGB")
+            norm_data = im_data / 255.0
+            arr = norm_data[:,:,:3] * norm_data[:, :, 3:4] + bg * (1 - norm_data[:, :, 3:4])
+            if norm_data[:, :, 3:4].min() < 1:
+                arr = np.concatenate([arr, norm_data[:, :, 3:4]], axis=2)
+                image = Image.fromarray(np.array(arr*255.0, dtype=np.byte), "RGBA")
             else:
-                im_data = np.array(image.convert("RGBA"))
-                bg = np.array([1,1,1]) if white_background else np.array([0, 0, 0])
-                norm_data = im_data / 255.0
-                arr = norm_data[:,:,:3] * norm_data[:, :, 3:4] + bg * (1 - norm_data[:, :, 3:4])
                 image = Image.fromarray(np.array(arr*255.0, dtype=np.byte), "RGB")
 
-            if fovx is not None:
-                fovy = focal2fov(fov2focal(fovx, image.size[0]), image.size[1])
-                FovY = fovy 
-                FovX = fovx
-            elif 'fl_x' in frame:
-                # given focal in pixel unit
-                FovY = focal2fov(frame["fl_y"], image.size[1])
-                FovX = focal2fov(frame["fl_x"], image.size[0])
-            else:
-                fl_x = contents['fl_x']
-                fl_y = contents['fl_y']
-                FovY = focal2fov(fl_y, image.size[1])
-                FovX = focal2fov(fl_x, image.size[0])
-
-            cam_infos.append(CameraInfo(uid=idx, R=R, T=T, FovY=FovY, FovX=FovX, image=image,
-                            image_path=image_path, image_name=image_name, width=image.size[0], height=image.size[1], timestamp=timestamp))
+            width, height = image.size[0], image.size[1]
+        else:
+            image = np.empty(0)
+            width, height = imagesize.get(image_path)
+        
+        if 'depth_path' in frame:
+            depth_name = frame["depth_path"]
+            if not extension in frame["depth_path"]:
+                depth_name = frame["depth_path"] + extension
+            depth_path = os.path.join(path, depth_name)
+            depth = Image.open(depth_path).copy()
+        else:
+            depth = None
+        tbar.update(1)
+        if 'fl_x' in frame and 'fl_y' in frame and 'cx' in frame and 'cy' in frame:
+            FovX = FovY = -1.0
+            fl_x = frame['fl_x']
+            fl_y = frame['fl_y']
+            cx = frame['cx']
+            cy = frame['cy']
+            return CameraInfo(uid=idx, R=R, T=T, FovY=FovY, FovX=FovX, image=image, depth=depth,
+                        image_path=image_path, image_name=image_name, width=width, height=height, timestamp=timestamp,
+                        fl_x=fl_x, fl_y=fl_y, cx=cx, cy=cy)
             
-            if is_debug and idx > 50:
-                break
+        elif 'fl_x' in contents and 'fl_y' in contents and 'cx' in contents and 'cy' in contents:
+            FovX = FovY = -1.0
+            fl_x = contents['fl_x']
+            fl_y = contents['fl_y']
+            cx = contents['cx']
+            cy = contents['cy']
+            return CameraInfo(uid=idx, R=R, T=T, FovY=FovY, FovX=FovX, image=image, depth=depth,
+                        image_path=image_path, image_name=image_name, width=width, height=height, timestamp=timestamp,
+                        fl_x=fl_x, fl_y=fl_y, cx=cx, cy=cy)
+        else:
+            fovy = focal2fov(fov2focal(fovx, width), height)
+            FovY = fovy
+            FovX = fovx
+            return CameraInfo(uid=idx, R=R, T=T, FovY=FovY, FovX=FovX, image=image, depth=depth,
+                            image_path=image_path, image_name=image_name, width=width, height=height, timestamp=timestamp)
+    
+    with ThreadPool() as pool:
+        cam_infos = pool.map(frame_read_fn, zip(list(range(len(frames))), frames))
+        pool.close()
+        pool.join()
+        
+    cam_infos = [cam_info for cam_info in cam_infos if cam_info is not None]
+    
     return cam_infos
 
 def readNerfSyntheticInfo(args, path, white_background, eval, extension=".png", ply_path=None):
+    data_mode = '_'+args.data_mode if args.data_mode else ''
+
     print("Reading Training Transforms")
-    train_cam_infos = readCamerasFromTransforms2(args, path, "transforms_train.json", white_background, extension)
+    train_cam_infos = readCamerasFromTransforms(args, path, "transforms"+data_mode+"_train.json", white_background, extension)
     print("Reading Test Transforms")
-    test_cam_infos = readCamerasFromTransforms2(args, path, "transforms_test.json", white_background, extension)
+    test_cam_infos = readCamerasFromTransforms(args, path, "transforms"+data_mode+"_test.json", white_background, extension)
     
     if not eval:
         train_cam_infos.extend(test_cam_infos)
@@ -317,7 +327,7 @@ def readNerfSyntheticInfo(args, path, white_background, eval, extension=".png", 
 
     nerf_normalization = getNerfppNorm(train_cam_infos)
     if ply_path is None:
-        ply_path = os.path.join(path, "points3d.ply")
+        ply_path = os.path.join(path, "points3d"+data_mode+".ply")
         print(f"ply_path: {ply_path}")
     if not os.path.exists(ply_path):
         # Since this data set has no colmap data, we start with random points
@@ -343,135 +353,6 @@ def readNerfSyntheticInfo(args, path, white_background, eval, extension=".png", 
     return scene_info
 
 WARNED = False
-
-def process_frame(args):
-    idx, frame, path, extension, white_background, undistorted, fovx, contents, resolution, orig_w, orig_h = args
-    cam_name = os.path.join(path, frame["file_path"] + extension)
-    if not os.path.exists(cam_name):
-        return None
-
-    c2w = np.array(frame["transform_matrix"])
-    timestamp = frame["time"]
-
-    # Change from OpenGL/Blender camera axes (Y up, Z back) to COLMAP (Y down, Z forward)
-    c2w[:3, 1:3] *= -1
-    if "small_city_img" in path:
-        c2w[-1, -1] = 1
-
-    # Get the world-to-camera transform and set R, T
-    w2c = np.linalg.inv(c2w)
-    R = np.transpose(w2c[:3, :3])
-    T = w2c[:3, 3]
-
-    precalc_path = os.path.join(path, cam_name.replace('images', 'images_'+str(resolution)))
-    image_path = os.path.join(path, cam_name)
-    image_name = Path(cam_name).stem
-
-    if os.path.exists(precalc_path):
-        image = Image.open(precalc_path)
-
-    else:
-        image = Image.open(image_path)
-
-        if undistorted:
-            mtx = np.array(
-                [
-                    [frame["fl_x"], 0, frame["cx"]],
-                    [0, frame["fl_y"], frame["cy"]],
-                    [0, 0, 1.0],
-                ],
-                dtype=np.float32,
-            )
-            dist = np.array([frame["k1"], frame["k2"], frame["p1"], frame["p2"], frame["k3"]], dtype=np.float32)
-            im_data = np.array(image.convert("RGB"))
-            arr = cv2.undistort(im_data / 255.0, mtx, dist, None, mtx)
-            image = Image.fromarray(np.array(arr * 255.0, dtype=np.byte), "RGB")
-        else:
-            im_data = np.array(image.convert("RGBA"))
-            bg = np.array([1, 1, 1]) if white_background else np.array([0, 0, 0])
-            norm_data = im_data / 255.0
-            arr = norm_data[:, :, :3] * norm_data[:, :, 3:4] + bg * (1 - norm_data[:, :, 3:4])
-            image = Image.fromarray(np.array(arr * 255.0, dtype=np.byte), "RGB")
-
-        resolution_scale = 1.0
-
-        if resolution in [1, 2, 4, 8]:
-            resolution = round(orig_w/(resolution_scale * resolution)), round(orig_h/(resolution_scale * resolution))
-        else:  # should be a type that converts to float
-            if resolution == -1:
-                if orig_w > 1600:
-                    global WARNED
-                    if not WARNED:
-                        print("[ INFO ] Encountered quite large input images (>1.6K pixels width), rescaling to 1.6K.\n "
-                            "If this is not desired, please explicitly specify '--resolution/-r' as 1")
-                        WARNED = True
-                    global_down = orig_w / 1600
-                else:
-                    global_down = 1
-            else:
-                global_down = orig_w / resolution
-
-            scale = float(global_down) * float(resolution_scale)
-            resolution = (int(orig_w / scale), int(orig_h / scale))
-
-        image = image.resize(resolution)
-
-        os.makedirs(os.path.dirname(precalc_path), exist_ok=True)
-        image.save(precalc_path)
-
-    if fovx is not None:
-        fovy = focal2fov(fov2focal(fovx, orig_w), orig_h)
-        FovY = fovy
-        FovX = fovx
-    elif 'fl_x' in frame:
-        FovY = focal2fov(frame["fl_y"], orig_h)
-        FovX = focal2fov(frame["fl_x"], orig_w)
-    else:
-        fl_x = contents['fl_x']
-        fl_y = contents['fl_y']
-        FovY = focal2fov(fl_y, orig_h)
-        FovX = focal2fov(fl_x, orig_w)
-
-    return CameraInfo(
-        uid=idx, R=R, T=T, FovY=FovY, FovX=FovX, image=image,
-        image_path=image_path, image_name=image_name,
-        width=orig_w, height=orig_h, timestamp=timestamp
-    )
-
-def readCamerasFromTransforms2(args, path, transformsfile, white_background, extension=".png", is_debug=False, undistorted=False):
-    with open(os.path.join(path, transformsfile)) as json_file:
-        contents = json.load(json_file)
-        try:
-            fovx = contents["camera_angle_x"]
-        except KeyError:
-            fovx = None
-
-        frames = contents["frames"]
-        if frames[0]["file_path"].split('.')[-1] in ['jpg', 'jpeg', 'JPG', 'png']:
-            extension = ""
-
-        img = Image.open(os.path.join(path, frames[0]["file_path"] + extension))
-        orig_w, orig_h = img.size
-        del img
-
-        num_workers = min(cpu_count(), len(frames))
-        progress_bar = tqdm(total=len(frames), desc="Loading dataset")
-
-        _args = [
-            (idx, frame, path, extension, white_background, undistorted, fovx, contents, args.resolution, orig_w, orig_h)
-            for idx, frame in enumerate(frames)
-        ]
-
-        cam_infos = []
-        with Pool(num_workers) as pool:
-            for cam_info in pool.imap(process_frame, _args):
-                if cam_info is not None:
-                    cam_infos.append(cam_info)
-                progress_bar.update()
-
-        progress_bar.close()
-
-        return cam_infos
 
 sceneLoadTypeCallbacks = {
     "Colmap": readColmapSceneInfo,
