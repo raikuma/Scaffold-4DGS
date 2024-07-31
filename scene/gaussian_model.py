@@ -663,14 +663,14 @@ class GaussianModel:
                     "opacity": new_opacities,
                 }
                 
+                for i in range(self.time_bin):
+                    temp_anchor_demon = torch.cat([self.anchor_demon[i], torch.zeros([new_opacities.shape[0], 1], device='cuda').float()], dim=0)
+                    del self.anchor_demon[i]
+                    self.anchor_demon.insert(i, temp_anchor_demon)
 
-                temp_anchor_demon = torch.cat([self.anchor_demon[ts], torch.zeros([new_opacities.shape[0], 1], device='cuda').float()], dim=0)
-                del self.anchor_demon[ts]
-                self.anchor_demon[ts] = temp_anchor_demon
-
-                temp_opacity_accum = torch.cat([self.opacity_accum[ts], torch.zeros([new_opacities.shape[0], 1], device='cuda').float()], dim=0)
-                del self.opacity_accum[ts]
-                self.opacity_accum[ts] = temp_opacity_accum
+                    temp_opacity_accum = torch.cat([self.opacity_accum[i], torch.zeros([new_opacities.shape[0], 1], device='cuda').float()], dim=0)
+                    del self.opacity_accum[i]
+                    self.opacity_accum.insert(i, temp_opacity_accum)
 
                 torch.cuda.empty_cache()
                 
@@ -693,14 +693,15 @@ class GaussianModel:
         grads_norm = torch.norm(grads, dim=-1)
         offset_mask = (self.offset_denom[ts] > check_interval*success_threshold*0.5).squeeze(dim=1)
         
-        num_increase = self.anchor_growing(grads_norm, grad_threshold, offset_mask)
+        num_increase = self.anchor_growing(grads_norm, grad_threshold, offset_mask, ts)
         
         # update offset_denom
         self.offset_denom[ts][offset_mask] = 0
         padding_offset_demon = torch.zeros([self.get_anchor.shape[0]*self.n_offsets - self.offset_denom[ts].shape[0], 1],
                                            dtype=torch.int32, 
                                            device=self.offset_denom[ts].device)
-        self.offset_denom[ts] = torch.cat([self.offset_denom[ts], padding_offset_demon], dim=0)
+        for i in range(self.time_bin):
+            self.offset_denom[i] = torch.cat([self.offset_denom[i], padding_offset_demon], dim=0)
 
         self.offset_gradient_accum[ts][offset_mask] = 0
         padding_offset_gradient_accum = torch.zeros([self.get_anchor.shape[0]*self.n_offsets - self.offset_gradient_accum[ts].shape[0], 1],

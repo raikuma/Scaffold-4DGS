@@ -185,7 +185,7 @@ def training(dataset, opt, pipe, dataset_name, testing_iterations, saving_iterat
                 
                 # densification
                 if iteration < opt.update_until and iteration > opt.start_stat:
-                    ts = int(batch_data[1].timestamp / 2)
+                    ts = int(viewpoint_cam.timestamp / dataset.time_duration[1] * opt.time_bin)
 
                     # add statis
                     gaussians.training_statis(viewspace_point_tensor, opacity, visibility_filter, offset_selection_mask, voxel_visible_mask, ts)
