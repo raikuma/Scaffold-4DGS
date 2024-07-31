@@ -540,7 +540,7 @@ if __name__ == "__main__":
             logger.info(f'save code failed~')
         
     dataset = args.source_path.split('/')[-1]
-    exp_name = args.model_path.split('/')[-2]
+    exp_name = args.model_path.split('/')[-2] + '-timebin'
     
     if args.use_wandb:
         wandb.login()
