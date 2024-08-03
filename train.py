@@ -145,12 +145,14 @@ def training(dataset, opt, pipe, dataset_name, testing_iterations, saving_iterat
             viewpoint_image = viewpoint_image.cuda()
             viewpoint_cam = viewpoint_cam.cuda()
 
+            n_offset = min((int)((gaussians.n_offsets-1) * (iteration / opt.update_until)) + 2, gaussians.n_offsets) # 2 ~ n_offsets
+
             # Render
             if (iteration - 1) == debug_from:
                 pipe.debug = True
             voxel_visible_mask = prefilter_voxel(viewpoint_cam, gaussians, pipe,background)
             retain_grad = (iteration < opt.update_until and iteration >= 0)
-            render_pkg = render(viewpoint_cam, gaussians, pipe, background, visible_mask=voxel_visible_mask, retain_grad=retain_grad)
+            render_pkg = render(viewpoint_cam, gaussians, pipe, background, visible_mask=voxel_visible_mask, retain_grad=retain_grad, n_offset=n_offset)
             
             image, viewspace_point_tensor, visibility_filter, offset_selection_mask, radii, scaling, opacity = render_pkg["render"], render_pkg["viewspace_points"], render_pkg["visibility_filter"], render_pkg["selection_mask"], render_pkg["radii"], render_pkg["scaling"], render_pkg["neural_opacity"]
 
@@ -168,6 +170,7 @@ def training(dataset, opt, pipe, dataset_name, testing_iterations, saving_iterat
 
             with torch.no_grad():
                 misc = {}
+                misc['offset_mask'] = n_offset
 
                 # Progress bar
                 ema_loss_for_log = 0.4 * loss.item() + 0.6 * ema_loss_for_log
@@ -539,7 +542,7 @@ if __name__ == "__main__":
             logger.info(f'save code failed~')
         
     dataset = args.source_path.split('/')[-1]
-    exp_name = args.model_path.split('/')[-2]
+    exp_name = args.model_path.split('/')[-2] + 'offset_mask'
     
     if args.use_wandb:
         wandb.login()
