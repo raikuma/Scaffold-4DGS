@@ -35,7 +35,7 @@ class ParamGroup:
                 if t == bool:
                     group.add_argument("--" + key, default=value, action="store_true")
                 elif t == list:
-                    group.add_argument("--" + key, default=value, nargs='+', type=type(value[0]))
+                    group.add_argument("--" + key, default=value, nargs='+', type=float)
                 else:
                     group.add_argument("--" + key, default=value, type=t)
 
@@ -62,6 +62,7 @@ class ModelParams(ParamGroup):
         self.use_feat_bank = False
         self._source_path = ""
         self._model_path = ""
+        self._load_path = ""
         self._images = "images"
         self._resolution = -1
         self._white_background = False
@@ -158,6 +159,8 @@ class OptimizationParams(ParamGroup):
         self.min_opacity = 0.005
         self.success_threshold = 0.8
         self.densify_grad_threshold = 0.0002
+
+        self.freeze_mlp = False
 
         super().__init__(parser, "Optimization Parameters")
 

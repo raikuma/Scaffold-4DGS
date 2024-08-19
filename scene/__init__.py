@@ -31,10 +31,11 @@ class Scene:
         self.loaded_iter = None
         self.gaussians = gaussians
         self.white_background = args.white_background
+        self.load_path = args.load_path if args.load_path else args.model_path
 
         if load_iteration:
             if load_iteration == -1:
-                self.loaded_iter = searchForMaxIteration(os.path.join(self.model_path, "point_cloud"))
+                self.loaded_iter = searchForMaxIteration(os.path.join(self.load_path, "point_cloud"))
             else:
                 self.loaded_iter = load_iteration
                 
@@ -86,11 +87,11 @@ class Scene:
             self.test_cameras[resolution_scale] = cameraList_from_camInfos(scene_info.test_cameras, resolution_scale, args)
 
         if self.loaded_iter:
-            self.gaussians.load_ply_sparse_gaussian(os.path.join(self.model_path,
+            self.gaussians.load_ply_sparse_gaussian(os.path.join(self.load_path,
                                                            "point_cloud",
                                                            "iteration_" + str(self.loaded_iter),
                                                            "point_cloud.ply"))
-            self.gaussians.load_mlp_checkpoints(os.path.join(self.model_path,
+            self.gaussians.load_mlp_checkpoints(os.path.join(self.load_path,
                                                            "point_cloud",
                                                            "iteration_" + str(self.loaded_iter)))
         else:

@@ -86,7 +86,7 @@ def training(dataset, opt, pipe, dataset_name, testing_iterations, saving_iterat
     tb_writer = prepare_output_and_logger(dataset)
     gaussians = GaussianModel(dataset.feat_dim, dataset.n_offsets, dataset.voxel_size, dataset.update_depth, dataset.update_init_factor, dataset.update_hierachy_factor, dataset.use_feat_bank, 
                               dataset.appearance_dim, dataset.ratio, dataset.add_opacity_dist, dataset.add_cov_dist, dataset.add_color_dist, dataset.time_dim, dataset.time_embedding)
-    scene = Scene(dataset, gaussians, ply_path=ply_path, shuffle=False)
+    scene = Scene(dataset, gaussians, ply_path=ply_path, shuffle=False, load_iteration=(-1 if dataset.load_path else None))
     gaussians.training_setup(opt)
     if checkpoint:
         (model_params, first_iter) = torch.load(checkpoint)
@@ -150,7 +150,7 @@ def training(dataset, opt, pipe, dataset_name, testing_iterations, saving_iterat
                 pipe.debug = True
             voxel_visible_mask = prefilter_voxel(viewpoint_cam, gaussians, pipe,background)
             retain_grad = (iteration < opt.update_until and iteration >= 0)
-            render_pkg = render(viewpoint_cam, gaussians, pipe, background, visible_mask=voxel_visible_mask, retain_grad=retain_grad)
+            render_pkg = render(viewpoint_cam, gaussians, pipe, background, visible_mask=voxel_visible_mask, retain_grad=retain_grad, is_training=True)
             
             image, viewspace_point_tensor, visibility_filter, offset_selection_mask, radii, scaling, opacity = render_pkg["render"], render_pkg["viewspace_points"], render_pkg["visibility_filter"], render_pkg["selection_mask"], render_pkg["radii"], render_pkg["scaling"], render_pkg["neural_opacity"]
 
@@ -532,20 +532,20 @@ if __name__ == "__main__":
         logger.info(f'using GPU {args.gpu}')
 
     
-    if not args.debug:
-        try:
-            saveRuntimeCode(os.path.join(args.model_path, 'backup'))
-        except:
-            logger.info(f'save code failed~')
+    # if not args.debug:
+    #     try:
+    #         saveRuntimeCode(os.path.join(args.model_path, 'backup'))
+    #     except:
+    #         logger.info(f'save code failed~')
         
     dataset = args.source_path.split('/')[-1]
-    exp_name = args.model_path.split('/')[-2]
+    exp_name = args.model_path.split('/')[-1]
     
     if args.use_wandb:
         wandb.login()
         run = wandb.init(
             # Set the project where this run will be logged
-            project=f"Scaffold-GS-{dataset}",
+            project=f"Scaffold-4DGS-{dataset}",
             name=exp_name,
             # Track hyperparameters and run metadata
             settings=wandb.Settings(start_method="fork"),
@@ -572,6 +572,9 @@ if __name__ == "__main__":
 
     # All done
     logger.info("\nTraining complete.")
+
+    # Remove load option
+    args.load_path = ""
 
     # rendering
     logger.info(f'\nStarting Rendering~')
