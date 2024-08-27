@@ -35,7 +35,7 @@ class ParamGroup:
                 if t == bool:
                     group.add_argument("--" + key, default=value, action="store_true")
                 elif t == list:
-                    group.add_argument("--" + key, default=value, nargs='+', type=type(value[0]))
+                    group.add_argument("--" + key, default=value, nargs='+', type=float)
                 else:
                     group.add_argument("--" + key, default=value, type=t)
 
