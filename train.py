@@ -199,6 +199,10 @@ def training(dataset, opt, pipe, dataset_name, testing_iterations, saving_iterat
                     del gaussians.offset_denom
                     torch.cuda.empty_cache()
 
+                # offset reset
+                if iteration < opt.update_until and iteration % opt.reset_interval == 0:
+                    gaussians.reset_offsets()
+
                 # Log
                 training_report(tb_writer, dataset_name, iteration, Ll1, loss, l1_loss, iter_start.elapsed_time(iter_end), testing_iterations, scene, render, (pipe, background), misc, wandb, logger)
                         

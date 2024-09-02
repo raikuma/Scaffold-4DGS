@@ -840,3 +840,6 @@ class GaussianModel:
             embed = [timestamp]
 
         return embed
+    
+    def reset_offsets(self):
+        self._offset.data = torch.zeros_like(self._offset.data).cuda()
