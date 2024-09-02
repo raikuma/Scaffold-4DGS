@@ -37,7 +37,7 @@ from utils.loss_utils import l1_loss, ssim
 from gaussian_renderer import prefilter_voxel, render, network_gui
 import sys
 from scene import Scene, GaussianModel
-from utils.general_utils import safe_state
+from utils.general_utils import safe_state, index_to_chunk
 import uuid
 from tqdm import tqdm
 import cv2
@@ -84,19 +84,23 @@ def saveRuntimeCode(dst: str) -> None:
 def training(dataset, opt, pipe, dataset_name, testing_iterations, saving_iterations, checkpoint_iterations, checkpoint, num_workers, debug_from, wandb=None, logger=None, ply_path=None):
     first_iter = 0
     tb_writer = prepare_output_and_logger(dataset)
-    gaussians = GaussianModel(dataset.feat_dim, dataset.n_offsets, dataset.voxel_size, dataset.update_depth, dataset.update_init_factor, dataset.update_hierachy_factor, dataset.use_feat_bank, 
-                              dataset.appearance_dim, dataset.ratio, dataset.add_opacity_dist, dataset.add_cov_dist, dataset.add_color_dist, dataset.time_dim, dataset.time_embedding)
-    scene = Scene(dataset, gaussians, ply_path=ply_path, shuffle=False)
-    gaussians.training_setup(opt)
+    gaussians_list = [GaussianModel(dataset.feat_dim, dataset.n_offsets, dataset.voxel_size, dataset.update_depth, dataset.update_init_factor, dataset.update_hierachy_factor, dataset.use_feat_bank, 
+                              dataset.appearance_dim, dataset.ratio, dataset.add_opacity_dist, dataset.add_cov_dist, dataset.add_color_dist, dataset.time_dim, dataset.time_embedding) for _ in range(dataset.n_chunks)]
+    scene = Scene(dataset, gaussians_list, ply_path=ply_path, shuffle=False)
+    # gaussians.training_setup(opt)
+    for g in gaussians_list:
+        g.training_setup(opt)
+        g.ref_pc = gaussians_list[0]
     if checkpoint:
         (model_params, first_iter) = torch.load(checkpoint)
-        gaussians.restore(model_params, opt)
+        gaussians_list.restore(model_params, opt)
 
     iter_start = torch.cuda.Event(enable_timing = True)
     iter_end = torch.cuda.Event(enable_timing = True)
 
     training_dataset = scene.getTrainCameras()
     training_dataloader = DataLoader(training_dataset, batch_size=1, shuffle=True, num_workers=num_workers if dataset.dataloader else 0, collate_fn=lambda x: x, drop_last=True)
+    test_dataset = scene.getTestCameras()
 
     # viewpoint_stack = None
     ema_loss_for_log = 0.0
@@ -109,6 +113,10 @@ def training(dataset, opt, pipe, dataset_name, testing_iterations, saving_iterat
             iteration += 1
             if iteration > opt.iterations:
                 break
+
+            viewpoint_image, viewpoint_cam = batch_data[0]
+            g_idx = index_to_chunk(viewpoint_cam.data_idx % len(test_dataset), len(test_dataset), len(gaussians_list))
+            gaussians = gaussians_list[g_idx]
 
             # network gui not available in scaffold-gs yet
             if network_gui.conn == None:
@@ -128,7 +136,8 @@ def training(dataset, opt, pipe, dataset_name, testing_iterations, saving_iterat
 
             iter_start.record()
 
-            gaussians.update_learning_rate(iteration)
+            for g in gaussians_list:
+                g.update_learning_rate(iteration)
 
             bg_color = [1, 1, 1] if dataset.white_background else [0, 0, 0]
             background = torch.tensor(bg_color, dtype=torch.float32, device="cuda")
@@ -141,7 +150,7 @@ def training(dataset, opt, pipe, dataset_name, testing_iterations, saving_iterat
             # # viewpoint_cam = viewpoint_stack.pop(randint(0, len(viewpoint_stack)-1))
             # viewpoint_image, viewpoint_cam = scene.getTrainCameras()[viewpoint_stack.pop(randint(0, len(viewpoint_stack)-1))]
 
-            viewpoint_image, viewpoint_cam = batch_data[0]
+            # viewpoint_image, viewpoint_cam = batch_data[0]
             viewpoint_image = viewpoint_image.cuda()
             viewpoint_cam = viewpoint_cam.cuda()
 
@@ -205,7 +214,9 @@ def training(dataset, opt, pipe, dataset_name, testing_iterations, saving_iterat
                 # Optimizer step
                 if iteration < opt.iterations:
                     gaussians.optimizer.step()
+                    gaussians_list[0].optimizer.step()
                     gaussians.optimizer.zero_grad(set_to_none = True)
+                    gaussians_list[0].optimizer.zero_grad(set_to_none = True)
                 if (iteration in checkpoint_iterations):
                     logger.info("\n[ITER {}] Saving Checkpoint".format(iteration))
                     torch.save((gaussians.capture(), iteration), scene.model_path + "/chkpnt" + str(iteration) + ".pth")
@@ -240,15 +251,18 @@ def training_report(tb_writer, dataset_name, iteration, Ll1, loss, l1_loss, elap
 
 
     if wandb is not None:
-        misc.update({'train_l1_loss':Ll1, 'train_total_loss':loss, 'num_points':scene.gaussians.get_anchor.shape[0]})
+        misc.update({'train_l1_loss':Ll1, 'train_total_loss':loss, 'num_points':scene.gaussians[0].get_anchor.shape[0]})
         wandb.log(misc)
     
     # Report test and samples of training set
     if iteration in testing_iterations:
-        scene.gaussians.eval()
+        for g in scene.gaussians:
+            g.eval()
         torch.cuda.empty_cache()
         validation_configs = ({'name': 'test', 'cameras' : scene.getTestCameras()}, 
                               {'name': 'train', 'cameras' : [scene.getTrainCameras()[idx % len(scene.getTrainCameras())] for idx in range(5, 30, 5)]})
+        
+        ts = len(scene.getTestCameras())
 
         for config in validation_configs:
             if config['cameras'] and len(config['cameras']) > 0:
@@ -264,8 +278,11 @@ def training_report(tb_writer, dataset_name, iteration, Ll1, loss, l1_loss, elap
                     viewimg = viewimg.cuda()
                     viewpoint = viewpoint.cuda()
 
-                    voxel_visible_mask = prefilter_voxel(viewpoint, scene.gaussians, *renderArgs)
-                    image = torch.clamp(renderFunc(viewpoint, scene.gaussians, *renderArgs, visible_mask=voxel_visible_mask)["render"], 0.0, 1.0)
+                    g_idx = index_to_chunk(viewpoint.data_idx % ts, ts, len(scene.gaussians))
+                    gaussians = scene.gaussians[g_idx]
+
+                    voxel_visible_mask = prefilter_voxel(viewpoint, gaussians, *renderArgs)
+                    image = torch.clamp(renderFunc(viewpoint, gaussians, *renderArgs, visible_mask=voxel_visible_mask)["render"], 0.0, 1.0)
                     gt_image = torch.clamp(viewimg, 0.0, 1.0)
                     if tb_writer and (idx < 30):
                         tb_writer.add_images(f'{dataset_name}/'+config['name'] + "_view_{}/render".format(viewpoint.image_name), image[None], global_step=iteration)
@@ -298,12 +315,13 @@ def training_report(tb_writer, dataset_name, iteration, Ll1, loss, l1_loss, elap
 
         if tb_writer:
             # tb_writer.add_histogram(f'{dataset_name}/'+"scene/opacity_histogram", scene.gaussians.get_opacity, iteration)
-            tb_writer.add_scalar(f'{dataset_name}/'+'total_points', scene.gaussians.get_anchor.shape[0], iteration)
+            tb_writer.add_scalar(f'{dataset_name}/'+'total_points', scene.gaussians[0].get_anchor.shape[0], iteration)
         torch.cuda.empty_cache()
 
-        scene.gaussians.train()
+        for g in scene.gaussians:
+            g.train()
 
-def render_set(model_path, name, iteration, views, gaussians, pipeline, background):
+def render_set(model_path, name, iteration, views, gaussians_list, pipeline, background, ts):
     render_path = os.path.join(model_path, name, "ours_{}".format(iteration), "renders")
     error_path = os.path.join(model_path, name, "ours_{}".format(iteration), "errors")
     gts_path = os.path.join(model_path, name, "ours_{}".format(iteration), "gt")
@@ -323,8 +341,11 @@ def render_set(model_path, name, iteration, views, gaussians, pipeline, backgrou
         viewimg = viewimg.cuda()
         view = view.cuda()
         
+        g_idx = index_to_chunk(view.data_idx % ts, ts, len(gaussians_list))
+        gaussians = gaussians_list[g_idx]
+
         torch.cuda.synchronize();t_start = time.time()
-        
+
         voxel_visible_mask = prefilter_voxel(view, gaussians, pipeline, background)
         render_pkg = render(view, gaussians, pipeline, background, visible_mask=voxel_visible_mask)
         torch.cuda.synchronize();t_end = time.time()
@@ -361,25 +382,29 @@ def render_set(model_path, name, iteration, views, gaussians, pipeline, backgrou
 
 def render_sets(dataset : ModelParams, iteration : int, pipeline : PipelineParams, skip_train=True, skip_test=False, wandb=None, tb_writer=None, dataset_name=None, logger=None):
     with torch.no_grad():
-        gaussians = GaussianModel(dataset.feat_dim, dataset.n_offsets, dataset.voxel_size, dataset.update_depth, dataset.update_init_factor, dataset.update_hierachy_factor, dataset.use_feat_bank, 
-                              dataset.appearance_dim, dataset.ratio, dataset.add_opacity_dist, dataset.add_cov_dist, dataset.add_color_dist, dataset.time_dim, dataset.time_embedding)
-        scene = Scene(dataset, gaussians, load_iteration=iteration, shuffle=False)
-        gaussians.eval()
+        gaussians_list = [GaussianModel(dataset.feat_dim, dataset.n_offsets, dataset.voxel_size, dataset.update_depth, dataset.update_init_factor, dataset.update_hierachy_factor, dataset.use_feat_bank,
+                                dataset.appearance_dim, dataset.ratio, dataset.add_opacity_dist, dataset.add_cov_dist, dataset.add_color_dist, dataset.time_dim, dataset.time_embedding) for _ in range(dataset.n_chunks)]
+        scene = Scene(dataset, gaussians_list, load_iteration=iteration, shuffle=False)
+        for g in gaussians_list:
+            g.ref_pc = gaussians_list[0]
+            g.eval()
 
         bg_color = [1,1,1] if dataset.white_background else [0, 0, 0]
         background = torch.tensor(bg_color, dtype=torch.float32, device="cuda")
         if not os.path.exists(dataset.model_path):
             os.makedirs(dataset.model_path)
 
+        ts = len(scene.getTestCameras())
+
         if not skip_train:
-            t_train_list, visible_count  = render_set(dataset.model_path, "train", scene.loaded_iter, scene.getTrainCameras(), gaussians, pipeline, background)
+            t_train_list, visible_count  = render_set(dataset.model_path, "train", scene.loaded_iter, scene.getTrainCameras(), gaussians_list, pipeline, background, ts)
             train_fps = 1.0 / torch.tensor(t_train_list[5:]).mean()
             logger.info(f'Train FPS: \033[1;35m{train_fps.item():.5f}\033[0m')
             if wandb is not None:
                 wandb.log({"train_fps":train_fps.item(), })
 
         if not skip_test:
-            t_test_list, visible_count = render_set(dataset.model_path, "test", scene.loaded_iter, scene.getTestCameras(), gaussians, pipeline, background)
+            t_test_list, visible_count = render_set(dataset.model_path, "test", scene.loaded_iter, scene.getTestCameras(), gaussians_list, pipeline, background, ts)
             test_fps = 1.0 / torch.tensor(t_test_list[5:]).mean()
             logger.info(f'Test FPS: \033[1;35m{test_fps.item():.5f}\033[0m')
             if tb_writer:

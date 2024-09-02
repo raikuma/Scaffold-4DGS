@@ -26,14 +26,14 @@ import time
 from gaussian_renderer import render, prefilter_voxel
 import torchvision
 from tqdm import tqdm
-from utils.general_utils import safe_state
+from utils.general_utils import safe_state, index_to_chunk
 from argparse import ArgumentParser
 from arguments import ModelParams, PipelineParams, get_combined_args
 from gaussian_renderer import GaussianModel
 import cv2
 import numpy as np
 
-def render_set(model_path, name, iteration, views, gaussians, pipeline, background):
+def render_set(model_path, name, iteration, views, gaussians_list, pipeline, background, ts):
     render_path = os.path.join(model_path, name, "ours_{}".format(iteration), "renders")
     gts_path = os.path.join(model_path, name, "ours_{}".format(iteration), "gt")
     video_path = os.path.join(model_path, name, "ours_{}".format(iteration), "renders.mp4")
@@ -51,6 +51,9 @@ def render_set(model_path, name, iteration, views, gaussians, pipeline, backgrou
     t_list = []
     for idx, (viewimg, view) in enumerate(tqdm(views, desc="Rendering progress")):
         view = view.cuda()
+
+        g_idx = index_to_chunk(view.data_idx % ts, ts, len(gaussians_list))
+        gaussians = gaussians_list[g_idx]
 
         torch.cuda.synchronize(); t0 = time.time()
         voxel_visible_mask = prefilter_voxel(view, gaussians, pipeline, background)
@@ -78,22 +81,26 @@ def render_set(model_path, name, iteration, views, gaussians, pipeline, backgrou
      
 def render_sets(dataset : ModelParams, iteration : int, pipeline : PipelineParams, skip_train : bool, skip_test : bool):
     with torch.no_grad():
-        gaussians = GaussianModel(dataset.feat_dim, dataset.n_offsets, dataset.voxel_size, dataset.update_depth, dataset.update_init_factor, dataset.update_hierachy_factor, dataset.use_feat_bank, 
-                              dataset.appearance_dim, dataset.ratio, dataset.add_opacity_dist, dataset.add_cov_dist, dataset.add_color_dist, dataset.time_dim, dataset.time_embedding)
-        scene = Scene(dataset, gaussians, load_iteration=iteration, shuffle=False)
+        gaussians_list = [GaussianModel(dataset.feat_dim, dataset.n_offsets, dataset.voxel_size, dataset.update_depth, dataset.update_init_factor, dataset.update_hierachy_factor, dataset.use_feat_bank, 
+                              dataset.appearance_dim, dataset.ratio, dataset.add_opacity_dist, dataset.add_cov_dist, dataset.add_color_dist, dataset.time_dim, dataset.time_embedding) for _ in range(dataset.n_chunks)]
+        scene = Scene(dataset, gaussians_list, load_iteration=iteration, shuffle=False)
         
-        gaussians.eval()
+        for g in gaussians_list:
+            g.ref_pc = scene.gaussians[0]
+            g.eval()
 
         bg_color = [1,1,1] if dataset.white_background else [0, 0, 0]
         background = torch.tensor(bg_color, dtype=torch.float32, device="cuda")
         if not os.path.exists(dataset.model_path):
             os.makedirs(dataset.model_path)
         
+        ts = len(scene.getTestCameras())
+
         if not skip_train:
-             render_set(dataset.model_path, "train", scene.loaded_iter, scene.getTrainCameras(), gaussians, pipeline, background)
+             render_set(dataset.model_path, "train", scene.loaded_iter, scene.getTrainCameras(), gaussians_list, pipeline, background, ts)
 
         if not skip_test:
-             render_set(dataset.model_path, "test", scene.loaded_iter, scene.getTestCameras(), gaussians, pipeline, background)
+             render_set(dataset.model_path, "test", scene.loaded_iter, scene.getTestCameras(), gaussians_list, pipeline, background, ts)
 
 if __name__ == "__main__":
     # Set up command line argument parser

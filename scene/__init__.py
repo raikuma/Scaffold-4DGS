@@ -51,7 +51,9 @@ class Scene:
         else:
             assert False, "Could not recognize scene type!"
 
-        self.gaussians.set_appearance(len(scene_info.train_cameras))
+        # self.gaussians.set_appearance(len(scene_info.train_cameras))
+        for g in self.gaussians:
+            g.set_appearance(len(scene_info.train_cameras))
         
         if not self.loaded_iter:
             if ply_path is not None:
@@ -86,20 +88,32 @@ class Scene:
             self.test_cameras[resolution_scale] = cameraList_from_camInfos(scene_info.test_cameras, resolution_scale, args)
 
         if self.loaded_iter:
-            self.gaussians.load_ply_sparse_gaussian(os.path.join(self.model_path,
+            # self.gaussians.load_ply_sparse_gaussian(os.path.join(self.model_path,
+            #                                                "point_cloud",
+            #                                                "iteration_" + str(self.loaded_iter),
+            #                                                "point_cloud.ply"))
+            # self.gaussians.load_mlp_checkpoints(os.path.join(self.model_path,
+            #                                                "point_cloud",
+            #                                                "iteration_" + str(self.loaded_iter)))
+            for i, g in enumerate(self.gaussians):
+                g.load_ply_sparse_gaussian(os.path.join(self.model_path,
                                                            "point_cloud",
                                                            "iteration_" + str(self.loaded_iter),
-                                                           "point_cloud.ply"))
-            self.gaussians.load_mlp_checkpoints(os.path.join(self.model_path,
+                                                           "point_cloud_{}.ply".format(i)))
+                g.load_mlp_checkpoints(os.path.join(self.model_path,
                                                            "point_cloud",
                                                            "iteration_" + str(self.loaded_iter)))
         else:
-            self.gaussians.create_from_pcd(scene_info.point_cloud, self.cameras_extent)
+            # self.gaussians.create_from_pcd(scene_info.point_cloud, self.cameras_extent)
+            for g in self.gaussians:
+                g.create_from_pcd(scene_info.point_cloud, self.cameras_extent)
 
     def save(self, iteration):
         point_cloud_path = os.path.join(self.model_path, "point_cloud/iteration_{}".format(iteration))
-        self.gaussians.save_ply(os.path.join(point_cloud_path, "point_cloud.ply"))
-        self.gaussians.save_mlp_checkpoints(point_cloud_path)
+        # self.gaussians.save_ply(os.path.join(point_cloud_path, "point_cloud.ply"))
+        for i, g in enumerate(self.gaussians):
+            g.save_ply(os.path.join(point_cloud_path, "point_cloud_{}.ply".format(i)))
+        self.gaussians[0].save_mlp_checkpoints(point_cloud_path)
 
     def getTrainCameras(self, scale=1.0):
         return CameraDataset(self.train_cameras[scale].copy(), self.white_background)

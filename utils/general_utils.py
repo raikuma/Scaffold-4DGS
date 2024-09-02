@@ -131,3 +131,17 @@ def safe_state(silent):
     np.random.seed(0)
     torch.manual_seed(0)
     torch.cuda.set_device(torch.device("cuda:0"))
+
+def index_to_chunk(i, n, k):
+    # 각 chunk의 기본 크기
+    chunk_size = n // k
+    # 추가로 하나 더 들어갈 chunk의 개수 (즉, n % k)
+    larger_chunks = n % k
+    
+    # 인덱스 i가 속하는 chunk 계산
+    if i < (chunk_size + 1) * larger_chunks:
+        j = i // (chunk_size + 1)
+    else:
+        j = (i - larger_chunks) // chunk_size
+    
+    return j

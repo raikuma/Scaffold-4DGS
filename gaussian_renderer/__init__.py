@@ -25,6 +25,8 @@ def generate_neural_gaussians(viewpoint_camera, pc : GaussianModel, visible_mask
     grid_offsets = pc._offset[visible_mask]
     grid_scaling = pc.get_scaling[visible_mask]
 
+    pc0 = pc.ref_pc
+
     ## get view properties for anchor
     ob_view = anchor - viewpoint_camera.camera_center
     # dist
@@ -38,7 +40,7 @@ def generate_neural_gaussians(viewpoint_camera, pc : GaussianModel, visible_mask
     if pc.use_feat_bank:
         cat_view = torch.cat([ob_view, ob_dist], dim=1)
         
-        bank_weight = pc.get_featurebank_mlp(cat_view).unsqueeze(dim=1) # [n, 1, 3]
+        bank_weight = pc0.get_featurebank_mlp(cat_view).unsqueeze(dim=1) # [n, 1, 3]
 
         ## multi-resolution feat
         feat = feat.unsqueeze(dim=-1)
@@ -56,9 +58,9 @@ def generate_neural_gaussians(viewpoint_camera, pc : GaussianModel, visible_mask
 
     # get offset's opacity
     if pc.add_opacity_dist:
-        neural_opacity = pc.get_opacity_mlp(cat_local_view) # [N, k]
+        neural_opacity = pc0.get_opacity_mlp(cat_local_view) # [N, k]
     else:
-        neural_opacity = pc.get_opacity_mlp(cat_local_view_wodist)
+        neural_opacity = pc0.get_opacity_mlp(cat_local_view_wodist)
 
     # opacity mask generation
     neural_opacity = neural_opacity.reshape([-1, 1])
@@ -71,21 +73,21 @@ def generate_neural_gaussians(viewpoint_camera, pc : GaussianModel, visible_mask
     # get offset's color
     if pc.appearance_dim > 0:
         if pc.add_color_dist:
-            color = pc.get_color_mlp(torch.cat([cat_local_view, appearance], dim=1))
+            color = pc0.get_color_mlp(torch.cat([cat_local_view, appearance], dim=1))
         else:
-            color = pc.get_color_mlp(torch.cat([cat_local_view_wodist, appearance], dim=1))
+            color = pc0.get_color_mlp(torch.cat([cat_local_view_wodist, appearance], dim=1))
     else:
         if pc.add_color_dist:
-            color = pc.get_color_mlp(cat_local_view)
+            color = pc0.get_color_mlp(cat_local_view)
         else:
-            color = pc.get_color_mlp(cat_local_view_wodist)
+            color = pc0.get_color_mlp(cat_local_view_wodist)
     color = color.reshape([anchor.shape[0]*pc.n_offsets, 3])# [mask]
 
     # get offset's cov
     if pc.add_cov_dist:
-        scale_rot = pc.get_cov_mlp(cat_local_view)
+        scale_rot = pc0.get_cov_mlp(cat_local_view)
     else:
-        scale_rot = pc.get_cov_mlp(cat_local_view_wodist)
+        scale_rot = pc0.get_cov_mlp(cat_local_view_wodist)
     scale_rot = scale_rot.reshape([anchor.shape[0]*pc.n_offsets, 7]) # [mask]
     
     # offsets
@@ -117,7 +119,8 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
     
     Background tensor (bg_color) must be on GPU!
     """
-    is_training = pc.get_color_mlp.training
+    pc0 = pc.ref_pc
+    is_training = pc0.get_color_mlp.training
         
     if is_training:
         xyz, color, opacity, scaling, rot, neural_opacity, mask = generate_neural_gaussians(viewpoint_camera, pc, visible_mask, is_training=is_training)

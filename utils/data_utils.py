@@ -31,6 +31,7 @@ class CameraDataset(Dataset):
         else:
             viewpoint_image = viewpoint_cam.image
             
+        viewpoint_cam.data_idx = index
         return viewpoint_image, viewpoint_cam
     
     def __len__(self):
