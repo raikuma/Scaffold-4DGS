@@ -632,7 +632,7 @@ class GaussianModel:
             # all_xyz = self.get_anchor.unsqueeze(dim=1) + self._offset * self.get_scaling[:,:3].unsqueeze(dim=1)
             with torch.no_grad():
                 feat = self._anchor_feat
-                ob_time = torch.tensor(viewpoint_cam.timestamp, device=feat.device, dtype=torch.float32).unsqueeze(dim=0).repeat([feat.shape[0], 1])
+                ob_time = torch.tensor(self.embed_time(viewpoint_cam.timestamp), device=feat.device, dtype=torch.float32).unsqueeze(dim=0).repeat([feat.shape[0], 1])
                 offsets = self.get_offset_mlp(torch.cat([feat, ob_time], dim=1)).view(*self._offset.shape)
                 all_xyz = self.get_anchor.unsqueeze(dim=1) + offsets * self.get_scaling[:,:3].unsqueeze(dim=1)
             
