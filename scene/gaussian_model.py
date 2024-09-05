@@ -58,6 +58,7 @@ class GaussianModel:
                  add_cov_dist : bool = False,
                  add_color_dist : bool = False,
                  time_dim: int=1,
+                 time_step: int=300,
                  time_embedding : str = None,
                  ):
 
@@ -68,7 +69,8 @@ class GaussianModel:
         self.update_init_factor = update_init_factor
         self.update_hierachy_factor = update_hierachy_factor
         self.use_feat_bank = use_feat_bank
-        self.time_dim = time_dim
+        self.time_step = 300
+        self.time_dim = time_step
         self.time_embedding = time_embedding
 
         self.appearance_dim = appearance_dim
@@ -81,6 +83,7 @@ class GaussianModel:
         self._anchor = torch.empty(0)
         self._offset = torch.empty(0)
         self._anchor_feat = torch.empty(0)
+        self._time_feat = torch.empty(0)
         
         self.opacity_accum = torch.empty(0)
 
@@ -256,6 +259,7 @@ class GaussianModel:
         fused_point_cloud = torch.tensor(np.asarray(points)).float().cuda()
         offsets = torch.zeros((fused_point_cloud.shape[0], self.n_offsets, 3)).float().cuda()
         anchors_feat = torch.zeros((fused_point_cloud.shape[0], self.feat_dim)).float().cuda()
+        time_feat = torch.zeros((self.time_step, self.time_dim)).float().cuda()
         
         print("Number of points at initialisation : ", fused_point_cloud.shape[0])
 
@@ -270,6 +274,7 @@ class GaussianModel:
         self._anchor = nn.Parameter(fused_point_cloud.requires_grad_(True))
         self._offset = nn.Parameter(offsets.requires_grad_(True))
         self._anchor_feat = nn.Parameter(anchors_feat.requires_grad_(True))
+        self._time_feat = nn.Parameter(time_feat.requires_grad_(True))
         self._scaling = nn.Parameter(scales.requires_grad_(True))
         self._rotation = nn.Parameter(rots.requires_grad_(False))
         self._opacity = nn.Parameter(opacities.requires_grad_(False))
@@ -292,6 +297,7 @@ class GaussianModel:
                 {'params': [self._anchor], 'lr': training_args.position_lr_init * self.spatial_lr_scale, "name": "anchor"},
                 {'params': [self._offset], 'lr': training_args.offset_lr_init * self.spatial_lr_scale, "name": "offset"},
                 {'params': [self._anchor_feat], 'lr': training_args.feature_lr, "name": "anchor_feat"},
+                {'params': [self._time_feat], 'lr': training_args.feature_lr, "name": "time_feat"},
                 {'params': [self._opacity], 'lr': training_args.opacity_lr, "name": "opacity"},
                 {'params': [self._scaling], 'lr': training_args.scaling_lr, "name": "scaling"},
                 {'params': [self._rotation], 'lr': training_args.rotation_lr, "name": "rotation"},
@@ -307,6 +313,7 @@ class GaussianModel:
                 {'params': [self._anchor], 'lr': training_args.position_lr_init * self.spatial_lr_scale, "name": "anchor"},
                 {'params': [self._offset], 'lr': training_args.offset_lr_init * self.spatial_lr_scale, "name": "offset"},
                 {'params': [self._anchor_feat], 'lr': training_args.feature_lr, "name": "anchor_feat"},
+                {'params': [self._time_feat], 'lr': training_args.feature_lr, "name": "time_feat"},
                 {'params': [self._opacity], 'lr': training_args.opacity_lr, "name": "opacity"},
                 {'params': [self._scaling], 'lr': training_args.scaling_lr, "name": "scaling"},
                 {'params': [self._rotation], 'lr': training_args.rotation_lr, "name": "rotation"},
@@ -321,6 +328,7 @@ class GaussianModel:
                 {'params': [self._anchor], 'lr': training_args.position_lr_init * self.spatial_lr_scale, "name": "anchor"},
                 {'params': [self._offset], 'lr': training_args.offset_lr_init * self.spatial_lr_scale, "name": "offset"},
                 {'params': [self._anchor_feat], 'lr': training_args.feature_lr, "name": "anchor_feat"},
+                {'params': [self._time_feat], 'lr': training_args.feature_lr, "name": "time_feat"},
                 {'params': [self._opacity], 'lr': training_args.opacity_lr, "name": "opacity"},
                 {'params': [self._scaling], 'lr': training_args.scaling_lr, "name": "scaling"},
                 {'params': [self._rotation], 'lr': training_args.rotation_lr, "name": "rotation"},
@@ -797,6 +805,9 @@ class GaussianModel:
                     }, os.path.join(path, 'checkpoints.pth'))
         else:
             raise NotImplementedError
+        
+        # save time_feat
+        torch.save(self._time_feat, os.path.join(path, 'time_feat.pt'))
 
 
     def load_mlp_checkpoints(self, path, mode = 'split'):#split or unite
@@ -819,6 +830,9 @@ class GaussianModel:
                 self.embedding_appearance.load_state_dict(checkpoint['appearance'])
         else:
             raise NotImplementedError
+        
+        # load time_feat
+        self._time_feat = torch.load(os.path.join(path, 'time_feat.pt')).cuda()
 
     def embed_time(self, timestamp):
         embed = []
@@ -832,10 +846,7 @@ class GaussianModel:
                 embed.append(np.pi * np.sin(ts * 2**i))
                 embed.append(np.pi * np.cos(ts * 2**i))
         elif self.time_embedding == 'random':
-            state = np.random.get_state()
-            np.random.seed(int(timestamp*1000))
-            embed = np.random.rand(self.time_dim)
-            np.random.set_state(state)
+            embed = self._time_feat[int(timestamp / 10 * 300)]
         else:
             embed = [timestamp]
 
