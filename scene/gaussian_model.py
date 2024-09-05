@@ -574,7 +574,8 @@ class GaussianModel:
             if  'mlp' in group['name'] or \
                 'conv' in group['name'] or \
                 'feat_base' in group['name'] or \
-                'embedding' in group['name']:
+                'embedding' in group['name'] or \
+                'time_feat' in group['name']:
                 continue
 
             stored_state = self.optimizer.state.get(group['params'][0], None)
