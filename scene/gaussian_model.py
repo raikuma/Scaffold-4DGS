@@ -134,11 +134,18 @@ class GaussianModel:
             nn.Sigmoid()
         ).cuda()
 
+        self.mlp_offset = nn.Sequential(
+            nn.Linear(feat_dim+self.time_dim, feat_dim),
+            nn.ReLU(True),
+            nn.Linear(feat_dim, 3*self.n_offsets),
+        ).cuda()
+
 
     def eval(self):
         self.mlp_opacity.eval()
         self.mlp_cov.eval()
         self.mlp_color.eval()
+        self.mlp_offset.eval()
         if self.appearance_dim > 0:
             self.embedding_appearance.eval()
         if self.use_feat_bank:
@@ -148,6 +155,7 @@ class GaussianModel:
         self.mlp_opacity.train()
         self.mlp_cov.train()
         self.mlp_color.train()
+        self.mlp_offset.train()
         if self.appearance_dim > 0:
             self.embedding_appearance.train()
         if self.use_feat_bank:                   
@@ -210,6 +218,10 @@ class GaussianModel:
     @property
     def get_color_mlp(self):
         return self.mlp_color
+    
+    @property
+    def get_offset_mlp(self):
+        return self.mlp_offset
     
     @property
     def get_rotation(self):
@@ -306,6 +318,7 @@ class GaussianModel:
                 {'params': self.mlp_feature_bank.parameters(), 'lr': training_args.mlp_featurebank_lr_init, "name": "mlp_featurebank"},
                 {'params': self.mlp_cov.parameters(), 'lr': training_args.mlp_cov_lr_init, "name": "mlp_cov"},
                 {'params': self.mlp_color.parameters(), 'lr': training_args.mlp_color_lr_init, "name": "mlp_color"},
+                {'params': self.mlp_offset.parameters(), 'lr': training_args.offset_lr_init, "name": "mlp_offset"},
                 {'params': self.embedding_appearance.parameters(), 'lr': training_args.appearance_lr_init, "name": "embedding_appearance"},
             ]
         elif self.appearance_dim > 0:
@@ -321,6 +334,7 @@ class GaussianModel:
                 {'params': self.mlp_opacity.parameters(), 'lr': training_args.mlp_opacity_lr_init, "name": "mlp_opacity"},
                 {'params': self.mlp_cov.parameters(), 'lr': training_args.mlp_cov_lr_init, "name": "mlp_cov"},
                 {'params': self.mlp_color.parameters(), 'lr': training_args.mlp_color_lr_init, "name": "mlp_color"},
+                {'params': self.mlp_offset.parameters(), 'lr': training_args.offset_lr_init, "name": "mlp_offset"},
                 {'params': self.embedding_appearance.parameters(), 'lr': training_args.appearance_lr_init, "name": "embedding_appearance"},
             ]
         else:
@@ -336,6 +350,7 @@ class GaussianModel:
                 {'params': self.mlp_opacity.parameters(), 'lr': training_args.mlp_opacity_lr_init, "name": "mlp_opacity"},
                 {'params': self.mlp_cov.parameters(), 'lr': training_args.mlp_cov_lr_init, "name": "mlp_cov"},
                 {'params': self.mlp_color.parameters(), 'lr': training_args.mlp_color_lr_init, "name": "mlp_color"},
+                {'params': self.mlp_offset.parameters(), 'lr': training_args.offset_lr_init, "name": "mlp_offset"}
             ]
 
         self.optimizer = torch.optim.Adam(l, lr=0.0, eps=1e-15)
@@ -362,6 +377,12 @@ class GaussianModel:
                                                     lr_final=training_args.mlp_color_lr_final,
                                                     lr_delay_mult=training_args.mlp_color_lr_delay_mult,
                                                     max_steps=training_args.mlp_color_lr_max_steps)
+        
+        self.mlp_offset_scheduler_args = get_expon_lr_func(lr_init=training_args.offset_lr_init,
+                                                    lr_final=training_args.offset_lr_final,
+                                                    lr_delay_mult=training_args.offset_lr_delay_mult,
+                                                    max_steps=training_args.offset_lr_max_steps)
+
         if self.use_feat_bank:
             self.mlp_featurebank_scheduler_args = get_expon_lr_func(lr_init=training_args.mlp_featurebank_lr_init,
                                                         lr_final=training_args.mlp_featurebank_lr_final,
@@ -390,6 +411,9 @@ class GaussianModel:
                 param_group['lr'] = lr
             if param_group["name"] == "mlp_color":
                 lr = self.mlp_color_scheduler_args(iteration)
+                param_group['lr'] = lr
+            if param_group["name"] == "mlp_offset":
+                lr = self.mlp_offset_scheduler_args(iteration)
                 param_group['lr'] = lr
             if self.use_feat_bank and param_group["name"] == "mlp_featurebank":
                 lr = self.mlp_featurebank_scheduler_args(iteration)
@@ -592,7 +616,7 @@ class GaussianModel:
         self._rotation = optimizable_tensors["rotation"]
 
     
-    def anchor_growing(self, grads, threshold, offset_mask):
+    def anchor_growing(self, viewpoint_cam, grads, threshold, offset_mask):
         ## 
         init_length = self.get_anchor.shape[0]*self.n_offsets
         for i in range(self.update_depth):
@@ -614,7 +638,12 @@ class GaussianModel:
             else:
                 candidate_mask = torch.cat([candidate_mask, torch.zeros(length_inc, dtype=torch.bool, device='cuda')], dim=0)
 
-            all_xyz = self.get_anchor.unsqueeze(dim=1) + self._offset * self.get_scaling[:,:3].unsqueeze(dim=1)
+            # all_xyz = self.get_anchor.unsqueeze(dim=1) + self._offset * self.get_scaling[:,:3].unsqueeze(dim=1)
+            with torch.no_grad():
+                feat = self._anchor_feat
+                ob_time = torch.tensor(viewpoint_cam.timestamp, device=feat.device, dtype=torch.float32).unsqueeze(dim=0).repeat([feat.shape[0], 1])
+                offsets = self.get_offset_mlp(torch.cat([feat, ob_time], dim=1)).view(*self._offset.shape)
+                all_xyz = self.get_anchor.unsqueeze(dim=1) + offsets * self.get_scaling[:,:3].unsqueeze(dim=1)
             
             # assert self.update_init_factor // (self.update_hierachy_factor**i) > 0
             # size_factor = min(self.update_init_factor // (self.update_hierachy_factor**i), 1)
@@ -693,14 +722,14 @@ class GaussianModel:
                 
 
 
-    def adjust_anchor(self, check_interval=100, success_threshold=0.8, grad_threshold=0.0002, min_opacity=0.005):
+    def adjust_anchor(self, viewpoint_cam, check_interval=100, success_threshold=0.8, grad_threshold=0.0002, min_opacity=0.005):
         # # adding anchors
         grads = self.offset_gradient_accum / self.offset_denom # [N*k, 1]
         grads[grads.isnan()] = 0.0
         grads_norm = torch.norm(grads, dim=-1)
         offset_mask = (self.offset_denom > check_interval*success_threshold*0.5).squeeze(dim=1)
         
-        num_increase = self.anchor_growing(grads_norm, grad_threshold, offset_mask)
+        num_increase = self.anchor_growing(viewpoint_cam, grads_norm, grad_threshold, offset_mask)
         
         # update offset_denom
         self.offset_denom[offset_mask] = 0
@@ -770,6 +799,11 @@ class GaussianModel:
             color_mlp.save(os.path.join(path, 'color_mlp.pt'))
             self.mlp_color.train()
 
+            self.mlp_offset.eval()
+            offset_mlp = torch.jit.trace(self.mlp_offset, (torch.rand(1, self.feat_dim+self.time_dim).cuda()))
+            offset_mlp.save(os.path.join(path, 'offset_mlp.pt'))
+            self.mlp_offset.train()
+
             if self.use_feat_bank:
                 self.mlp_feature_bank.eval()
                 feature_bank_mlp = torch.jit.trace(self.mlp_feature_bank, (torch.rand(1, 3+1).cuda()))
@@ -816,6 +850,7 @@ class GaussianModel:
             self.mlp_opacity = torch.jit.load(os.path.join(path, 'opacity_mlp.pt')).cuda()
             self.mlp_cov = torch.jit.load(os.path.join(path, 'cov_mlp.pt')).cuda()
             self.mlp_color = torch.jit.load(os.path.join(path, 'color_mlp.pt')).cuda()
+            self.mlp_offset = torch.jit.load(os.path.join(path, 'offset_mlp.pt')).cuda()
             if self.use_feat_bank:
                 self.mlp_feature_bank = torch.jit.load(os.path.join(path, 'feature_bank_mlp.pt')).cuda()
             if self.appearance_dim > 0:
@@ -825,6 +860,7 @@ class GaussianModel:
             self.mlp_opacity.load_state_dict(checkpoint['opacity_mlp'])
             self.mlp_cov.load_state_dict(checkpoint['cov_mlp'])
             self.mlp_color.load_state_dict(checkpoint['color_mlp'])
+            self.mlp_offset.load_state_dict(checkpoint['offset_mlp'])
             if self.use_feat_bank:
                 self.mlp_feature_bank.load_state_dict(checkpoint['feature_bank_mlp'])
             if self.appearance_dim > 0:
