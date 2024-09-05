@@ -496,7 +496,8 @@ class GaussianModel:
             if  'mlp' in group['name'] or \
                 'conv' in group['name'] or \
                 'feat_base' in group['name'] or \
-                'embedding' in group['name']:
+                'embedding' in group['name'] or \
+                'time_feat' in group['name']:
                 continue
             assert len(group["params"]) == 1
             extension_tensor = tensors_dict[group["name"]]
