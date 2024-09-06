@@ -89,9 +89,10 @@ def generate_neural_gaussians(viewpoint_camera, pc : GaussianModel, visible_mask
     scale_rot = scale_rot.reshape([anchor.shape[0]*pc.n_offsets, 7]) # [mask]
     
     # offsets
-    # offsets = grid_offsets.view([-1, 3]) # [mask]
-    offsets = pc.get_offset_mlp(torch.cat([feat, ob_time], dim=1))
-    offsets = offsets.reshape([anchor.shape[0]*pc.n_offsets, 3]) # [mask]
+    offsets = grid_offsets.view([-1, 3]) # [mask]
+    _offsets = pc.get_offset_mlp(torch.cat([feat, ob_time], dim=1))
+    _offsets = offsets.reshape([anchor.shape[0]*pc.n_offsets, 3]) # [mask]
+    offsets = offsets + _offsets
     
     # combine for parallel masking
     concatenated = torch.cat([grid_scaling, anchor], dim=-1)
