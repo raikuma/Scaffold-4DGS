@@ -102,7 +102,8 @@ class Scene:
                                                            "point_cloud_{}.ply".format(i)))
                 g.load_mlp_checkpoints(os.path.join(self.model_path,
                                                            "point_cloud",
-                                                           "iteration_" + str(self.loaded_iter)))
+                                                           "iteration_" + str(self.loaded_iter),
+                                                           "mlp_{}".format(i)))
         else:
             # self.gaussians.create_from_pcd(scene_info.point_cloud, self.cameras_extent)
             for g in self.gaussians:
@@ -113,7 +114,10 @@ class Scene:
         # self.gaussians.save_ply(os.path.join(point_cloud_path, "point_cloud.ply"))
         for i, g in enumerate(self.gaussians):
             g.save_ply(os.path.join(point_cloud_path, "point_cloud_{}.ply".format(i)))
-        self.gaussians[0].save_mlp_checkpoints(point_cloud_path)
+        for i, g in enumerate(self.gaussians):
+            mlp_path = os.path.join(point_cloud_path, "mlp_{}".format(i))
+            os.makedirs(mlp_path, exist_ok=True)
+            g.save_mlp_checkpoints(mlp_path)
 
     def getTrainCameras(self, scale=1.0):
         return CameraDataset(self.train_cameras[scale].copy(), self.white_background)

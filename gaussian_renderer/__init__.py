@@ -25,7 +25,8 @@ def generate_neural_gaussians(viewpoint_camera, pc : GaussianModel, visible_mask
     grid_offsets = pc._offset[visible_mask]
     grid_scaling = pc.get_scaling[visible_mask]
 
-    pc0 = pc.ref_pc
+    # pc0 = pc.ref_pc
+    pc0 = pc
 
     ## get view properties for anchor
     ob_view = anchor - viewpoint_camera.camera_center
@@ -121,7 +122,8 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
     
     Background tensor (bg_color) must be on GPU!
     """
-    pc0 = pc.ref_pc
+    # pc0 = pc.ref_pc
+    pc0 = pc
     is_training = pc0.get_color_mlp.training
         
     if is_training:
