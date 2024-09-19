@@ -97,6 +97,8 @@ def training(dataset, opt, pipe, dataset_name, testing_iterations, saving_iterat
 
     training_dataset = scene.getTrainCameras()
     training_dataloader = DataLoader(training_dataset, batch_size=1, shuffle=True, num_workers=num_workers if dataset.dataloader else 0, collate_fn=lambda x: x, drop_last=True)
+    test_dataset = scene.getTestCameras()
+    test_view = test_dataset[0][1].cuda()
 
     # viewpoint_stack = None
     ema_loss_for_log = 0.0
@@ -153,6 +155,8 @@ def training(dataset, opt, pipe, dataset_name, testing_iterations, saving_iterat
             render_pkg = render(viewpoint_cam, gaussians, pipe, background, visible_mask=voxel_visible_mask, retain_grad=retain_grad)
             
             image, viewspace_point_tensor, visibility_filter, offset_selection_mask, radii, scaling, opacity = render_pkg["render"], render_pkg["viewspace_points"], render_pkg["visibility_filter"], render_pkg["selection_mask"], render_pkg["radii"], render_pkg["scaling"], render_pkg["neural_opacity"]
+            image_depth = render_pkg["depth"].detach().expand_as(image)
+            image_depth = (image_depth - image_depth.min()) / (image_depth.max() - image_depth.min())
 
             # gt_image = viewpoint_cam.original_image.cuda()
             gt_image = viewpoint_image.cuda()
@@ -167,13 +171,40 @@ def training(dataset, opt, pipe, dataset_name, testing_iterations, saving_iterat
             iter_end.record()
 
             with torch.no_grad():
+                # Debug Visualize
+                if pipe.debug:
+                    if iteration % 10 == 0 and iteration < opt.update_until:
+
+                        # TRAIN VIEW
+                        gaussians.eval()
+                        grad = viewspace_point_tensor.grad.detach().norm(dim=1).unsqueeze(-1).expand(-1, 3) / 0.0002
+                        grad.clamp_max_(1)
+                        render_pkg = render(viewpoint_cam, gaussians, pipe, background, visible_mask=voxel_visible_mask, retain_grad=retain_grad, gscale=1.0, precolor=grad)
+                        img_grad = render_pkg["render"]
+
+                        img_err = (gt_image - image).norm(dim=0).unsqueeze(0).expand(image.shape)
+
+                        # TEST VIEW
+                        test_view.timestamp = viewpoint_cam.timestamp
+                        vvmask = prefilter_voxel(test_view, gaussians, pipe,background)
+                        render_pkg = render(test_view, gaussians, pipe, background, visible_mask=vvmask, retain_grad=retain_grad)
+                        img_test = render_pkg["render"]
+
+                        render_pkg = render(test_view, gaussians, pipe, background, visible_mask=vvmask, retain_grad=retain_grad, gscale=0.1)
+                        img_test_gs = render_pkg["render"]
+
+                        grid = torchvision.utils.make_grid([gt_image, image, img_test, img_test_gs,
+                                                            img_grad, img_err, image_depth], nrow=4)
+                        torchvision.utils.save_image(grid, 'debug_render.png')
+                        gaussians.train()
+
                 misc = {}
 
                 # Progress bar
                 ema_loss_for_log = 0.4 * loss.item() + 0.6 * ema_loss_for_log
 
                 if iteration % 10 == 0:
-                    progress_bar.set_postfix({"Loss": f"{ema_loss_for_log:.{7}f}"})
+                    progress_bar.set_postfix({"Loss": f"{ema_loss_for_log:.{7}f}", "N": f"{len(scene.gaussians.get_anchor)}"})
                     progress_bar.update(10)
                 if iteration == opt.iterations:
                     progress_bar.close()
