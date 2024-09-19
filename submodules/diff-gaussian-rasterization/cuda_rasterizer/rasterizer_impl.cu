@@ -61,8 +61,8 @@ __global__ void checkFrustum(int P,
 	if (idx >= P)
 		return;
 
-	float3 p_view;
-	present[idx] = in_frustum(idx, orig_points, viewmatrix, projmatrix, false, p_view);
+	// float3 p_view;
+	// present[idx] = in_frustum(idx, orig_points, viewmatrix, projmatrix, false, p_view);
 }
 
 // Generates one key/value pair for all Gaussian / tile overlaps. 
@@ -162,6 +162,11 @@ CudaRasterizer::GeometryState CudaRasterizer::GeometryState::fromChunk(char*& ch
 	obtain(chunk, geom.cov3D, P * 6, 128);
 	obtain(chunk, geom.conic_opacity, P, 128);
 	obtain(chunk, geom.rgb, P * 3, 128);
+	obtain(chunk, geom.normal, P * 3, 128);
+	obtain(chunk, geom.Jinv, P * 10, 128);
+	obtain(chunk, geom.viewCos, P, 128);
+	obtain(chunk, geom.pid, P, 128);
+	obtain(chunk, geom.pview, P, 128);
 	obtain(chunk, geom.tiles_touched, P, 128);
 	cub::DeviceScan::InclusiveSum(nullptr, geom.scan_size, geom.tiles_touched, geom.tiles_touched, P);
 	obtain(chunk, geom.scanning_space, geom.scan_size, 128);
@@ -173,8 +178,13 @@ CudaRasterizer::ImageState CudaRasterizer::ImageState::fromChunk(char*& chunk, s
 {
 	ImageState img;
 	obtain(chunk, img.accum_alpha, N, 128);
+	obtain(chunk, img.accum_depth, N, 128);
+	obtain(chunk, img.accum_color, 3 * N, 128);
 	obtain(chunk, img.n_contrib, N, 128);
 	obtain(chunk, img.ranges, N, 128);
+	obtain(chunk, img.n_contrib_cut, N, 128);
+	obtain(chunk, img.accum_alpha_cut, N, 128);
+	obtain(chunk, img.accum_var, N, 128);
 	return img;
 }
 
@@ -212,10 +222,16 @@ int CudaRasterizer::Rasterizer::forward(
 	const float* cov3D_precomp,
 	const float* viewmatrix,
 	const float* projmatrix,
+	const float* prcppoint,
+	const float* patchbbox,
 	const float* cam_pos,
 	const float tan_fovx, float tan_fovy,
 	const bool prefiltered,
+	float* config,
 	float* out_color,
+	float* out_normal,
+	float* out_depth,
+	float* out_opac,
 	int* radii,
 	bool debug)
 {
@@ -256,7 +272,8 @@ int CudaRasterizer::Rasterizer::forward(
 		geomState.clamped,
 		cov3D_precomp,
 		colors_precomp,
-		viewmatrix, projmatrix,
+		viewmatrix, projmatrix, 
+		prcppoint, patchbbox,
 		(glm::vec3*)cam_pos,
 		width, height,
 		focal_x, focal_y,
@@ -266,10 +283,16 @@ int CudaRasterizer::Rasterizer::forward(
 		geomState.depths,
 		geomState.cov3D,
 		geomState.rgb,
+		geomState.normal,
 		geomState.conic_opacity,
+		geomState.Jinv,
+		geomState.viewCos,
+		geomState.pid,
+		geomState.pview,
 		tile_grid,
 		geomState.tiles_touched,
-		prefiltered
+		prefiltered,
+		config
 	), debug)
 
 	// Compute prefix sum over full list of touched tile counts by Gaussians
@@ -323,16 +346,27 @@ int CudaRasterizer::Rasterizer::forward(
 		tile_grid, block,
 		imgState.ranges,
 		binningState.point_list,
-		width, height,
+		width, height, 
+		prcppoint, patchbbox,
+		focal_x, focal_y,
 		geomState.means2D,
 		feature_ptr,
+		geomState.normal,
+		geomState.depths,
 		geomState.conic_opacity,
+		geomState.Jinv,
+		geomState.pid,
+		geomState.pview,
 		imgState.accum_alpha,
+		imgState.accum_depth,
+		imgState.accum_color,
+		imgState.accum_var,
 		imgState.n_contrib,
+		imgState.accum_alpha_cut,
+		imgState.n_contrib_cut,
 		background,
-		out_color
-		), debug)
-
+		out_color, out_normal, out_depth, out_opac, 
+		config), debug)
 	return num_rendered;
 }
 
@@ -412,22 +446,33 @@ void CudaRasterizer::Rasterizer::backward(
 	const float* viewmatrix,
 	const float* projmatrix,
 	const float* campos,
+	const float* prcppoint,
+	const float* patchbbox,
 	const float tan_fovx, float tan_fovy,
 	const int* radii,
 	char* geom_buffer,
 	char* binning_buffer,
 	char* img_buffer,
-	const float* dL_dpix,
+	const float* dL_dpixcolor,
+	const float* dL_dpixnormal,
+	const float* dL_dpixdepth,
+	const float* dL_dpixopac,
 	float* dL_dmean2D,
 	float* dL_dconic,
 	float* dL_dopacity,
 	float* dL_dcolor,
+	float* dL_dnormal,
+	float* dL_ddepth,
 	float* dL_dmean3D,
 	float* dL_dcov3D,
 	float* dL_dsh,
 	float* dL_dscale,
 	float* dL_drot,
-	bool debug)
+	float* dL_dviewmat,
+	float* dL_dprojmat,
+	float* dL_dcampos,
+	bool debug, 
+	float* config)
 {
 	GeometryState geomState = GeometryState::fromChunk(geom_buffer, P);
 	BinningState binningState = BinningState::fromChunk(binning_buffer, R);
@@ -454,17 +499,32 @@ void CudaRasterizer::Rasterizer::backward(
 		imgState.ranges,
 		binningState.point_list,
 		width, height,
+		patchbbox,
 		background,
 		geomState.means2D,
 		geomState.conic_opacity,
 		color_ptr,
+		geomState.normal,
+		geomState.depths,
+		geomState.Jinv,
+		geomState.viewCos,
 		imgState.accum_alpha,
+		imgState.accum_depth,
+		imgState.accum_color,
+		imgState.accum_var,
 		imgState.n_contrib,
-		dL_dpix,
+		imgState.accum_alpha_cut,
+		imgState.n_contrib_cut,
+		dL_dpixcolor,
+		dL_dpixnormal,
+		dL_dpixdepth,
+		dL_dpixopac,
 		(float3*)dL_dmean2D,
 		(float4*)dL_dconic,
 		dL_dopacity,
-		dL_dcolor), debug)
+		dL_dcolor,
+		dL_dnormal,
+		dL_ddepth, config), debug)
 
 	// Take care of the rest of preprocessing. Was the precomputed covariance
 	// given to us or a scales/rot pair? If precomputed, pass that. If not,
@@ -488,8 +548,12 @@ void CudaRasterizer::Rasterizer::backward(
 		dL_dconic,
 		(glm::vec3*)dL_dmean3D,
 		dL_dcolor,
+		dL_dnormal,
+		dL_ddepth,
 		dL_dcov3D,
 		dL_dsh,
 		(glm::vec3*)dL_dscale,
-		(glm::vec4*)dL_drot), debug)
+		(glm::vec4*)dL_drot, 
+		dL_dviewmat, dL_dprojmat, dL_dcampos,
+		config), debug)
 }

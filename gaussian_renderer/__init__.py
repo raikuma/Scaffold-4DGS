@@ -147,16 +147,19 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
         scale_modifier=scaling_modifier,
         viewmatrix=viewpoint_camera.world_view_transform,
         projmatrix=viewpoint_camera.full_proj_transform,
+        patch_bbox=viewpoint_camera.random_patch(float(torch.inf), float(torch.inf)),
+        prcppoint=torch.tensor([0.5, 0.5]).to(torch.float32).cuda(),
         sh_degree=1,
         campos=viewpoint_camera.camera_center,
         prefiltered=False,
-        debug=pipe.debug
+        debug=pipe.debug,
+        config=torch.tensor([False, True, False]).to(torch.float32).cuda()
     )
 
     rasterizer = GaussianRasterizer(raster_settings=raster_settings)
     
     # Rasterize visible Gaussians to image, obtain their radii (on screen). 
-    rendered_image, radii = rasterizer(
+    rendered_image, rendered_normal, rendered_depth, rendered_opac, radii = rasterizer(
         means3D = xyz,
         means2D = screenspace_points,
         shs = None,
@@ -175,6 +178,7 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
                 "selection_mask": mask,
                 "neural_opacity": neural_opacity,
                 "scaling": scaling,
+                "depth": rendered_depth,
                 }
     else:
         return {"render": rendered_image,
@@ -210,10 +214,13 @@ def prefilter_voxel(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch
         scale_modifier=scaling_modifier,
         viewmatrix=viewpoint_camera.world_view_transform,
         projmatrix=viewpoint_camera.full_proj_transform,
+        patch_bbox=viewpoint_camera.random_patch(float(torch.inf), float(torch.inf)),
+        prcppoint=torch.tensor([0.5, 0.5]).to(torch.float32).cuda(),
         sh_degree=1,
         campos=viewpoint_camera.camera_center,
         prefiltered=False,
-        debug=pipe.debug
+        debug=pipe.debug,
+        config=torch.tensor([False, True, False]).to(torch.float32).cuda()
     )
 
     rasterizer = GaussianRasterizer(raster_settings=raster_settings)

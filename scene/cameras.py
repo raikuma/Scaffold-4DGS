@@ -14,6 +14,7 @@ from torch import nn
 import numpy as np
 from utils.graphics_utils import getWorld2View2, getProjectionMatrix, getProjectionMatrixCenterShift
 from copy import deepcopy
+import random
 
 class Camera:
     def __init__(self, colmap_id, R, T, FoVx, FoVy, image, gt_alpha_mask,
@@ -86,6 +87,17 @@ class Camera:
             if isinstance(v, torch.Tensor):
                 cuda_copy.__dict__[k] = v.to(cuda_copy.data_device)
         return cuda_copy
+    
+    def random_patch(self, h_size=float('inf'), w_size=float('inf')):
+        h = self.image_height
+        w = self.image_width
+        h_size = min(h_size, h)
+        w_size = min(w_size, w)
+        h0 = random.randint(0, h - h_size)
+        w0 = random.randint(0, w - w_size)
+        h1 = h0 + h_size
+        w1 = w0 + w_size
+        return torch.tensor([h0, w0, h1, w1]).to(torch.float32).cuda()
 
 class MiniCam:
     def __init__(self, width, height, fovy, fovx, znear, zfar, world_view_transform, full_proj_transform):
