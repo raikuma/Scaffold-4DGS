@@ -34,7 +34,7 @@ import torchvision.transforms.functional as tf
 import lpips
 from random import randint
 from utils.loss_utils import l1_loss, ssim
-from gaussian_renderer import prefilter_voxel, render, network_gui
+from gaussian_renderer import prefilter_voxel, render, network_gui, render_anchor
 import sys
 from scene import Scene, GaussianModel
 from utils.general_utils import safe_state
@@ -177,7 +177,7 @@ def training(dataset, opt, pipe, dataset_name, testing_iterations, saving_iterat
 
                         # TRAIN VIEW
                         gaussians.eval()
-                        grad = viewspace_point_tensor.grad.detach().norm(dim=1).unsqueeze(-1).expand(-1, 3) / 0.0002
+                        grad = viewspace_point_tensor.grad.detach().norm(dim=1).unsqueeze(-1).expand(-1, 3) / 0.002
                         grad.clamp_max_(1)
                         render_pkg = render(viewpoint_cam, gaussians, pipe, background, visible_mask=voxel_visible_mask, retain_grad=retain_grad, gscale=1.0, precolor=grad)
                         img_grad = render_pkg["render"]
@@ -187,15 +187,29 @@ def training(dataset, opt, pipe, dataset_name, testing_iterations, saving_iterat
                         # TEST VIEW
                         test_view.timestamp = viewpoint_cam.timestamp
                         vvmask = prefilter_voxel(test_view, gaussians, pipe,background)
-                        render_pkg = render(test_view, gaussians, pipe, background, visible_mask=vvmask, retain_grad=retain_grad)
+                        render_pkg = render(test_view, gaussians, pipe, background, visible_mask=vvmask, retain_grad=False)
                         img_test = render_pkg["render"]
 
-                        render_pkg = render(test_view, gaussians, pipe, background, visible_mask=vvmask, retain_grad=retain_grad, gscale=0.1)
+                        background2 = torch.tensor([0, 0, 0], dtype=torch.float32, device="cuda")
+                        render_pkg = render_anchor(test_view, gaussians, pipe, background2, visible_mask=vvmask, retain_grad=False)
+                        img_test_anchor = render_pkg["render"]
+
+                        render_pkg = render(test_view, gaussians, pipe, background, visible_mask=vvmask, retain_grad=False, gscale=0.1)
                         img_test_gs = render_pkg["render"]
 
+                        render_pkg = render(test_view, gaussians, pipe, background, visible_mask=vvmask, retain_grad=False, fixop=True)
+                        img_test_fixop = render_pkg["render"]
+                        render_pkg = render(test_view, gaussians, pipe, background, visible_mask=vvmask, retain_grad=False, fixscale=True)
+                        img_test_fixscale = render_pkg["render"]
+                        render_pkg = render(test_view, gaussians, pipe, background, visible_mask=vvmask, retain_grad=False, fixcolor=True)
+                        img_test_fixcolor = render_pkg["render"]
+
                         grid = torchvision.utils.make_grid([gt_image, image, img_test, img_test_gs,
-                                                            img_grad, img_err, image_depth], nrow=4)
+                                                            img_grad, img_err, image_depth, img_test_anchor,
+                                                            img_test_fixop, img_test_fixscale, img_test_fixcolor], nrow=4)
+
                         torchvision.utils.save_image(grid, 'debug_render.png')
+                        torchvision.utils.save_image(grid, f'debug_grid/{iteration}.png')
                         gaussians.train()
 
                 misc = {}

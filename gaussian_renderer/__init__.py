@@ -113,7 +113,7 @@ def generate_neural_gaussians(viewpoint_camera, pc : GaussianModel, visible_mask
     else:
         return xyz, color, opacity, scaling, rot
 
-def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, scaling_modifier = 1.0, visible_mask=None, retain_grad=False, gscale=1.0, precolor=None, op=False):
+def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, scaling_modifier = 1.0, visible_mask=None, retain_grad=False, gscale=1.0, precolor=None, op=False, fixop=False, fixscale=False, fixcolor=False):
     """
     Render the scene. 
     
@@ -125,6 +125,99 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
         xyz, color, opacity, scaling, rot, neural_opacity, mask = generate_neural_gaussians(viewpoint_camera, pc, visible_mask, is_training=is_training)
     else:
         xyz, color, opacity, scaling, rot = generate_neural_gaussians(viewpoint_camera, pc, visible_mask, is_training=is_training)
+
+    if fixop:    
+        opacity = torch.ones_like(opacity, device=opacity.device)
+
+    if fixscale:
+        scaling = torch.ones_like(scaling, device=scaling.device) * 0.005
+
+    if fixcolor:
+        color = (xyz - xyz.min()) / (xyz.max() - xyz.min())
+
+    scaling = scaling * gscale
+
+    # Create zero tensor. We will use it to make pytorch return gradients of the 2D (screen-space) means
+    screenspace_points = torch.zeros_like(xyz, dtype=pc.get_anchor.dtype, requires_grad=True, device="cuda") + 0
+    if retain_grad:
+        try:
+            screenspace_points.retain_grad()
+        except:
+            pass
+
+
+    # Set up rasterization configuration
+    tanfovx = math.tan(viewpoint_camera.FoVx * 0.5)
+    tanfovy = math.tan(viewpoint_camera.FoVy * 0.5)
+
+    raster_settings = GaussianRasterizationSettings(
+        image_height=int(viewpoint_camera.image_height),
+        image_width=int(viewpoint_camera.image_width),
+        tanfovx=tanfovx,
+        tanfovy=tanfovy,
+        bg=bg_color,
+        scale_modifier=scaling_modifier,
+        viewmatrix=viewpoint_camera.world_view_transform,
+        projmatrix=viewpoint_camera.full_proj_transform,
+        patch_bbox=viewpoint_camera.random_patch(float(torch.inf), float(torch.inf)),
+        prcppoint=torch.tensor([0.5, 0.5]).to(torch.float32).cuda(),
+        sh_degree=1,
+        campos=viewpoint_camera.camera_center,
+        prefiltered=False,
+        debug=pipe.debug,
+        config=torch.tensor([False, True, False]).to(torch.float32).cuda()
+    )
+
+    rasterizer = GaussianRasterizer(raster_settings=raster_settings)
+    
+    # Rasterize visible Gaussians to image, obtain their radii (on screen). 
+    rendered_image, rendered_normal, rendered_depth, rendered_opac, radii = rasterizer(
+        means3D = xyz,
+        means2D = screenspace_points,
+        shs = None,
+        colors_precomp = precolor if precolor is not None else color,
+        opacities = torch.ones_like(opacity, device=opacity.device) if op else opacity,
+        scales = scaling,
+        rotations = rot,
+        cov3D_precomp = None)
+    
+    # Those Gaussians that were frustum culled or had a radius of 0 were not visible.
+    if is_training:
+        return {"render": rendered_image,
+                "viewspace_points": screenspace_points,
+                "visibility_filter" : radii > 0,
+                "radii": radii,
+                "selection_mask": mask,
+                "neural_opacity": neural_opacity,
+                "scaling": scaling,
+                "depth": rendered_depth,
+                }
+    else:
+        return {"render": rendered_image,
+                "viewspace_points": screenspace_points,
+                "visibility_filter" : radii > 0,
+                "radii": radii,
+                }
+    
+def render_anchor(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, scaling_modifier = 1.0, visible_mask=None, retain_grad=False, gscale=1.0, precolor=None, op=False):
+    """
+    Render the scene. 
+    
+    Background tensor (bg_color) must be on GPU!
+    """
+    is_training = pc.get_color_mlp.training
+        
+    # if is_training:
+    #     xyz, color, opacity, scaling, rot, neural_opacity, mask = generate_neural_gaussians(viewpoint_camera, pc, visible_mask, is_training=is_training)
+    # else:
+    #     xyz, color, opacity, scaling, rot = generate_neural_gaussians(viewpoint_camera, pc, visible_mask, is_training=is_training)
+
+    xyz = pc.get_anchor
+    opacity = pc.get_opacity
+    # scaling = pc.get_scaling
+    scaling = torch.ones_like(pc.get_scaling, device=pc.get_scaling.device) * 0.005
+    rot = pc.get_rotation
+    color = (xyz - xyz.min()) / (xyz.max() - xyz.min())
     
     scaling = scaling * gscale
 
