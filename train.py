@@ -163,7 +163,7 @@ def training(dataset, opt, pipe, dataset_name, testing_iterations, saving_iterat
             Ll1 = l1_loss(image, gt_image)
 
             ssim_loss = (1.0 - ssim(image, gt_image))
-            scaling_reg = scaling.prod(dim=1).mean()
+            scaling_reg = scaling[:,:3].prod(dim=1).mean()
             loss = (1.0 - opt.lambda_dssim) * Ll1 + opt.lambda_dssim * ssim_loss + 0.01*scaling_reg
 
             loss.backward()

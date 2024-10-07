@@ -26,13 +26,14 @@ def generate_neural_gaussians(viewpoint_camera, pc : GaussianModel, visible_mask
     grid_scaling = pc.get_scaling[visible_mask]
 
     ## get view properties for anchor
-    ob_view = anchor - viewpoint_camera.camera_center
+    ob_view = anchor[:, :3] - viewpoint_camera.camera_center
     # dist
     ob_dist = ob_view.norm(dim=1, keepdim=True)
     # view
     ob_view = ob_view / ob_dist
     # time
-    ob_time = torch.tensor(pc.embed_time(viewpoint_camera.timestamp), device=ob_dist.device, dtype=torch.float32).unsqueeze(dim=0).repeat([ob_dist.shape[0], 1])
+    # ob_time = torch.tensor(pc.embed_time(viewpoint_camera.timestamp), device=ob_dist.device, dtype=torch.float32).unsqueeze(dim=0).repeat([ob_dist.shape[0], 1])
+    timestamp = viewpoint_camera.timestamp
 
     ## view-adaptive feature
     if pc.use_feat_bank:
@@ -47,8 +48,8 @@ def generate_neural_gaussians(viewpoint_camera, pc : GaussianModel, visible_mask
             feat[:,::1, :1]*bank_weight[:,:,2:]
         feat = feat.squeeze(dim=-1) # [n, c]
 
-    cat_local_view = torch.cat([feat, ob_view, ob_dist, ob_time], dim=1) # [N, c+3+1+time_dim]
-    cat_local_view_wodist = torch.cat([feat, ob_view, ob_time], dim=1) # [N, c+3+time_dim]
+    cat_local_view = torch.cat([feat, ob_view, ob_dist], dim=1) # [N, c+3+1+time_dim]
+    cat_local_view_wodist = torch.cat([feat, ob_view], dim=1) # [N, c+3+time_dim]
     if pc.appearance_dim > 0:
         camera_indicies = torch.ones_like(cat_local_view[:,0], dtype=torch.long, device=ob_dist.device) * viewpoint_camera.uid
         # camera_indicies = torch.ones_like(cat_local_view[:,0], dtype=torch.long, device=ob_dist.device) * 10
@@ -86,32 +87,34 @@ def generate_neural_gaussians(viewpoint_camera, pc : GaussianModel, visible_mask
         scale_rot = pc.get_cov_mlp(cat_local_view)
     else:
         scale_rot = pc.get_cov_mlp(cat_local_view_wodist)
-    scale_rot = scale_rot.reshape([anchor.shape[0]*pc.n_offsets, 7]) # [mask]
+    scale_rot = scale_rot.reshape([anchor.shape[0]*pc.n_offsets, 8]) # [mask]
     
     # offsets
-    # offsets = grid_offsets.view([-1, 3]) # [mask]
-    offsets = pc.get_offset_mlp(torch.cat([feat, ob_time], dim=1))
-    offsets = offsets.reshape([anchor.shape[0]*pc.n_offsets, 3]) # [mask]
+    offsets = grid_offsets.view([-1, 4]) # [mask]
     
     # combine for parallel masking
     concatenated = torch.cat([grid_scaling, anchor], dim=-1)
     concatenated_repeated = repeat(concatenated, 'n (c) -> (n k) (c)', k=pc.n_offsets)
     concatenated_all = torch.cat([concatenated_repeated, color, scale_rot, offsets], dim=-1)
     masked = concatenated_all[mask]
-    scaling_repeat, repeat_anchor, color, scale_rot, offsets = masked.split([6, 3, 3, 7, 3], dim=-1)
+    scaling_repeat, repeat_anchor, color, scale_rot, offsets = masked.split([8, 4, 3, 8, 4], dim=-1)
     
     # post-process cov
-    scaling = scaling_repeat[:,3:] * torch.sigmoid(scale_rot[:,:3]) # * (1+torch.sigmoid(repeat_dist))
-    rot = pc.rotation_activation(scale_rot[:,3:7])
+    scaling = scaling_repeat[:,4:] * torch.sigmoid(scale_rot[:,:4]) # * (1+torch.sigmoid(repeat_dist))
+    rot = pc.rotation_activation(scale_rot[:,4:8])
     
     # post-process offsets to get centers for gaussians
-    offsets = offsets * scaling_repeat[:,:3]
+    offsets = offsets * scaling_repeat[:,:4]
     xyz = repeat_anchor + offsets
 
+    # time variant
+    power = torch.exp(-(xyz[:, 3:4] - timestamp)**2 / (2 * scaling[:, 3:4]**2))
+    opacity = opacity * power
+
     if is_training:
-        return xyz, color, opacity, scaling, rot, neural_opacity, mask
+        return xyz[:,:3], color, opacity, scaling[:,:3], rot, neural_opacity, mask
     else:
-        return xyz, color, opacity, scaling, rot
+        return xyz[:,:3], color, opacity, scaling[:,:3], rot
 
 def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, scaling_modifier = 1.0, visible_mask=None, retain_grad=False, gscale=1.0, precolor=None, op=False, fixop=False, fixscale=False, fixcolor=False):
     """
@@ -212,10 +215,9 @@ def render_anchor(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.T
     # else:
     #     xyz, color, opacity, scaling, rot = generate_neural_gaussians(viewpoint_camera, pc, visible_mask, is_training=is_training)
 
-    xyz = pc.get_anchor
-    opacity = pc.get_opacity
-    # scaling = pc.get_scaling
-    scaling = torch.ones_like(pc.get_scaling, device=pc.get_scaling.device) * 0.005
+    xyz = pc.get_anchor[:,:3]
+    opacity = torch.ones(xyz.shape[0], 1, device=xyz.device)
+    scaling = torch.ones(xyz.shape[0], 3, device=xyz.device) * 0.005
     rot = pc.get_rotation
     color = (xyz - xyz.min()) / (xyz.max() - xyz.min())
     
@@ -291,7 +293,7 @@ def prefilter_voxel(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch
     Background tensor (bg_color) must be on GPU!
     """
     # Create zero tensor. We will use it to make pytorch return gradients of the 2D (screen-space) means
-    screenspace_points = torch.zeros_like(pc.get_anchor, dtype=pc.get_anchor.dtype, requires_grad=True, device="cuda") + 0
+    screenspace_points = torch.zeros_like(pc.get_anchor[:,:3], dtype=pc.get_anchor.dtype, requires_grad=True, device="cuda") + 0
     try:
         screenspace_points.retain_grad()
     except:
@@ -321,7 +323,7 @@ def prefilter_voxel(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch
 
     rasterizer = GaussianRasterizer(raster_settings=raster_settings)
 
-    means3D = pc.get_anchor
+    means3D = pc.get_anchor[:,:3]
 
 
     # If precomputed 3d covariance is provided, use it. If not, then it will be computed from
