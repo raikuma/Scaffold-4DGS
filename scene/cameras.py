@@ -98,6 +98,15 @@ class Camera:
         h1 = h0 + h_size
         w1 = w0 + w_size
         return torch.tensor([h0, w0, h1, w1]).to(torch.float32).cuda()
+    
+    def recalc(self):
+        self.world_view_transform = torch.tensor(getWorld2View2(self.R, self.T, self.trans, self.scale)).transpose(0, 1)
+        if self.cx > 0:
+            self.projection_matrix = getProjectionMatrixCenterShift(self.znear, self.zfar, self.cx, self.cy, self.fl_x, self.fl_y, self.image_width, self.image_height).transpose(0,1)
+        else:
+            self.projection_matrix = getProjectionMatrix(znear=self.znear, zfar=self.zfar, fovX=self.FoVx, fovY=self.FoVy).transpose(0,1)
+        self.full_proj_transform = (self.world_view_transform.unsqueeze(0).bmm(self.projection_matrix.unsqueeze(0))).squeeze(0)
+        self.camera_center = self.world_view_transform.inverse()[3, :3]
 
 class MiniCam:
     def __init__(self, width, height, fovy, fovx, znear, zfar, world_view_transform, full_proj_transform):

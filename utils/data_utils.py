@@ -9,12 +9,15 @@ import numpy as np
 
 class CameraDataset(Dataset):
     
-    def __init__(self, viewpoint_stack, white_background):
+    def __init__(self, viewpoint_stack, white_background, noimg=False):
         self.viewpoint_stack = viewpoint_stack
         self.bg = np.array([1,1,1]) if white_background else np.array([0, 0, 0])
+        self.noimg = noimg
         
     def __getitem__(self, index):
         viewpoint_cam = self.viewpoint_stack[index]
+        if self.noimg:
+            return None, viewpoint_cam
         if viewpoint_cam.meta_only:
             with Image.open(viewpoint_cam.image_path) as image_load:
                 im_data = np.array(image_load.convert("RGBA"))
