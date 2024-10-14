@@ -232,6 +232,7 @@ def readCamerasFromTransforms(args, path, transformsfile, white_background, exte
         idx = idx_frame[0]
         frame = idx_frame[1]
         timestamp = frame.get('time', 0.0)
+        frame_ratio = args.frame_ratio
         if frame_ratio > 1:
             timestamp /= frame_ratio
         if args.time_duration is not None and 'time' in frame:

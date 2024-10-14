@@ -70,6 +70,7 @@ class ModelParams(ParamGroup):
         self.lod = 0
         self.dataloader = False
         self.time_duration = [0.0, 10.0]
+        self.frame_ratio = 1.0
 
         self.appearance_dim = 0
         self.lowpoly = False
@@ -110,6 +111,11 @@ class OptimizationParams(ParamGroup):
         self.offset_lr_delay_mult = 0.01
         self.offset_lr_max_steps = 30_000
 
+        self.tscale_lr_init = 0.01
+        self.tscale_lr_final = 0.0001
+        self.tscale_lr_delay_mult = 0.01
+        self.tscale_lr_max_steps = 30_000
+
         self.feature_lr = 0.0075
         self.opacity_lr = 0.02
         self.scaling_lr = 0.007
@@ -131,10 +137,10 @@ class OptimizationParams(ParamGroup):
         self.mlp_color_lr_delay_mult = 0.01
         self.mlp_color_lr_max_steps = 30_000
 
-        self.mlp_color_lr_init = 0.008
-        self.mlp_color_lr_final = 0.00005
-        self.mlp_color_lr_delay_mult = 0.01
-        self.mlp_color_lr_max_steps = 30_000
+        self.mlp_flow_lr_init = 0.001
+        self.mlp_flow_lr_final = 0.001
+        self.mlp_flow_lr_delay_mult = 0.01
+        self.mlp_flow_lr_max_steps = 30_000
         
         self.mlp_featurebank_lr_init = 0.01
         self.mlp_featurebank_lr_final = 0.00001

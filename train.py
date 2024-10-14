@@ -155,6 +155,7 @@ def training(dataset, opt, pipe, dataset_name, testing_iterations, saving_iterat
             render_pkg = render(viewpoint_cam, gaussians, pipe, background, visible_mask=voxel_visible_mask, retain_grad=retain_grad)
             
             image, viewspace_point_tensor, visibility_filter, offset_selection_mask, radii, scaling, opacity = render_pkg["render"], render_pkg["viewspace_points"], render_pkg["visibility_filter"], render_pkg["selection_mask"], render_pkg["radii"], render_pkg["scaling"], render_pkg["neural_opacity"]
+            opacity_t = render_pkg["opacity"]
             image_depth = render_pkg["depth"].detach().expand_as(image)
             image_depth = (image_depth - image_depth.min()) / (image_depth.max() - image_depth.min())
 
@@ -165,6 +166,7 @@ def training(dataset, opt, pipe, dataset_name, testing_iterations, saving_iterat
             ssim_loss = (1.0 - ssim(image, gt_image))
             scaling_reg = scaling[:,:3].prod(dim=1).mean()
             loss = (1.0 - opt.lambda_dssim) * Ll1 + opt.lambda_dssim * ssim_loss + 0.01*scaling_reg
+            # loss = (1.0 - opt.lambda_dssim) * Ll1 + opt.lambda_dssim * ssim_loss
 
             loss.backward()
             
@@ -173,12 +175,17 @@ def training(dataset, opt, pipe, dataset_name, testing_iterations, saving_iterat
             with torch.no_grad():
                 # Debug Visualize
                 if pipe.debug:
-                    if iteration % 10 == 0 and iteration < opt.update_until:
+                    if iteration % 100 == 0 and iteration < opt.update_until:
 
                         # TRAIN VIEW
                         gaussians.eval()
-                        grad = viewspace_point_tensor.grad.detach().norm(dim=1).unsqueeze(-1).expand(-1, 3) / 0.002
+                        # grad = viewspace_point_tensor.grad.detach().norm(dim=1).unsqueeze(-1).expand(-1, 3) / 0.002
+                        grad = (gaussians.offset_gradient_accum / gaussians.offset_denom).expand(-1, 3) / opt.densify_grad_threshold
+                        # grad = (gaussians.offset_gradient_accum).expand(-1, 3) / opt.densify_grad_threshold
+                        th_mask = (grad >= 1).float()
                         grad.clamp_max_(1)
+                        offset_mask = (gaussians.offset_denom > opt.update_interval * opt.success_threshold * 0.5).float().expand(-1, 3)
+                        grad = grad * offset_mask * th_mask
                         render_pkg = render(viewpoint_cam, gaussians, pipe, background, visible_mask=voxel_visible_mask, retain_grad=retain_grad, gscale=1.0, precolor=grad)
                         img_grad = render_pkg["render"]
 
@@ -194,19 +201,42 @@ def training(dataset, opt, pipe, dataset_name, testing_iterations, saving_iterat
                         render_pkg = render_anchor(test_view, gaussians, pipe, background2, visible_mask=vvmask, retain_grad=False)
                         img_test_anchor = render_pkg["render"]
 
-                        render_pkg = render(test_view, gaussians, pipe, background, visible_mask=vvmask, retain_grad=False, gscale=0.1)
-                        img_test_gs = render_pkg["render"]
+                        t_gs = (gaussians.get_anchor[:,3:4].unsqueeze(dim=1) + gaussians._offset[:,:,3:4] * gaussians.get_scaling[:,3:4].unsqueeze(dim=1)).view(-1, 1).clamp(0, 1)
+                        g = t_gs
+                        r = torch.zeros_like(g)
+                        b = 1 - t_gs
+                        t_color = torch.cat([r, g, b], dim=1)
+                        render_pkg = render(test_view, gaussians, pipe, background, visible_mask=vvmask, retain_grad=False, precolor=t_color, gscale=1.0)
+                        img_test_t_color = render_pkg["render"]
+
+                        t_scale = gaussians.get_cov_mlp(gaussians._anchor_feat).view(-1, 8)[:,3:4]
+                        t_scale = torch.exp(t_scale).view(-1, 1).expand(-1, 3)
+                        t_scale = (t_scale.clamp(-5, 5) + 5) / 10
+                        render_pkg = render(test_view, gaussians, pipe, background, visible_mask=vvmask, retain_grad=False, precolor=t_scale, gscale=1.0)
+                        img_test_t_scale = render_pkg["render"]
+
+                        # flow = (gaussians.get_flow_mlp(gaussians._anchor_feat).view(-1, gaussians.n_offsets, 3) * gaussians.get_scaling[:,3:4].unsqueeze(dim=1)).view(-1, 3)
+                        # flow = gaussians.get_flow_mlp(gaussians._anchor_feat).view(-1, 3)
+                        # flow = (flow.clamp(-5, 5) + 5 / 10)
+                        # render_pkg = render(test_view, gaussians, pipe, background, visible_mask=vvmask, retain_grad=False, precolor=flow, gscale=1.0)
+                        # img_test_flow = render_pkg["render"]
 
                         render_pkg = render(test_view, gaussians, pipe, background, visible_mask=vvmask, retain_grad=False, fixop=True)
                         img_test_fixop = render_pkg["render"]
                         render_pkg = render(test_view, gaussians, pipe, background, visible_mask=vvmask, retain_grad=False, fixscale=True)
                         img_test_fixscale = render_pkg["render"]
-                        render_pkg = render(test_view, gaussians, pipe, background, visible_mask=vvmask, retain_grad=False, fixcolor=True)
-                        img_test_fixcolor = render_pkg["render"]
+                        # render_pkg = render(test_view, gaussians, pipe, background, visible_mask=vvmask, retain_grad=False, fixcolor=True)
+                        # img_test_fixcolor = render_pkg["render"]
 
-                        grid = torchvision.utils.make_grid([gt_image, image, img_test, img_test_gs,
+                        render_pkg = render(test_view, gaussians, pipe, background, visible_mask=vvmask, retain_grad=False, precolor=grad, fixop=False)
+                        img_test_grad = render_pkg["render"]
+
+                        empty = torch.zeros_like(image)
+
+                        grid = torchvision.utils.make_grid([gt_image, image, img_test, img_test_grad,
                                                             img_grad, img_err, image_depth, img_test_anchor,
-                                                            img_test_fixop, img_test_fixscale, img_test_fixcolor], nrow=4)
+                                                            img_test_fixop, img_test_fixscale, img_test_t_color, img_test_t_scale
+                                                            ], nrow=4)
 
                         torchvision.utils.save_image(grid, 'debug_render.png')
                         torchvision.utils.save_image(grid, f'debug_grid/{iteration}.png')
@@ -231,7 +261,7 @@ def training(dataset, opt, pipe, dataset_name, testing_iterations, saving_iterat
                 # densification
                 if iteration < opt.update_until and iteration > opt.start_stat:
                     # add statis
-                    gaussians.training_statis(viewspace_point_tensor, opacity, visibility_filter, offset_selection_mask, voxel_visible_mask)
+                    gaussians.training_statis(viewspace_point_tensor, opacity, visibility_filter, offset_selection_mask, voxel_visible_mask, opacity_t)
                     
                     # densification
                     if iteration > opt.update_from and iteration % opt.update_interval == 0:
