@@ -155,6 +155,7 @@ def training(dataset, opt, pipe, dataset_name, testing_iterations, saving_iterat
             render_pkg = render(viewpoint_cam, gaussians, pipe, background, visible_mask=voxel_visible_mask, retain_grad=retain_grad)
             
             image, viewspace_point_tensor, visibility_filter, offset_selection_mask, radii, scaling, opacity = render_pkg["render"], render_pkg["viewspace_points"], render_pkg["visibility_filter"], render_pkg["selection_mask"], render_pkg["radii"], render_pkg["scaling"], render_pkg["neural_opacity"]
+            marginal_t = render_pkg["marginal_t"]
             image_depth = render_pkg["depth"].detach().expand_as(image)
             image_depth = (image_depth - image_depth.min()) / (image_depth.max() - image_depth.min())
 
@@ -173,11 +174,11 @@ def training(dataset, opt, pipe, dataset_name, testing_iterations, saving_iterat
             with torch.no_grad():
                 # Debug Visualize
                 if pipe.debug:
-                    if iteration % 10 == 0 and iteration < opt.update_until:
+                    if iteration % 100 == 0 and iteration < opt.update_until:
 
                         # TRAIN VIEW
                         gaussians.eval()
-                        grad = viewspace_point_tensor.grad.detach().norm(dim=1).unsqueeze(-1).expand(-1, 3) / 0.002
+                        grad = viewspace_point_tensor.grad.detach().norm(dim=1).unsqueeze(-1).expand(-1, 3) / opt.densify_grad_threshold
                         grad.clamp_max_(1)
                         render_pkg = render(viewpoint_cam, gaussians, pipe, background, visible_mask=voxel_visible_mask, retain_grad=retain_grad, gscale=1.0, precolor=grad)
                         img_grad = render_pkg["render"]
@@ -231,7 +232,7 @@ def training(dataset, opt, pipe, dataset_name, testing_iterations, saving_iterat
                 # densification
                 if iteration < opt.update_until and iteration > opt.start_stat:
                     # add statis
-                    gaussians.training_statis(viewspace_point_tensor, opacity, visibility_filter, offset_selection_mask, voxel_visible_mask)
+                    gaussians.training_statis(viewspace_point_tensor, opacity, visibility_filter, offset_selection_mask, voxel_visible_mask, marginal_t)
                     
                     # densification
                     if iteration > opt.update_from and iteration % opt.update_interval == 0:

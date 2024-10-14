@@ -49,6 +49,7 @@ def generate_neural_gaussians(viewpoint_camera, pc : GaussianModel, visible_mask
 
     cat_local_view = torch.cat([feat, ob_view, ob_dist, ob_time], dim=1) # [N, c+3+1+time_dim]
     cat_local_view_wodist = torch.cat([feat, ob_view, ob_time], dim=1) # [N, c+3+time_dim]
+    cat_local_time = torch.cat([feat, ob_time], dim=1) # [N, time_dim]
     if pc.appearance_dim > 0:
         camera_indicies = torch.ones_like(cat_local_view[:,0], dtype=torch.long, device=ob_dist.device) * viewpoint_camera.uid
         # camera_indicies = torch.ones_like(cat_local_view[:,0], dtype=torch.long, device=ob_dist.device) * 10
@@ -65,8 +66,10 @@ def generate_neural_gaussians(viewpoint_camera, pc : GaussianModel, visible_mask
     mask = (neural_opacity>0.0)
     mask = mask.view(-1)
 
+    marginal_t = pc.get_marginal_mlp(cat_local_time).reshape([-1, 1])[mask]
+
     # select opacity 
-    opacity = neural_opacity[mask]
+    opacity = neural_opacity[mask] * marginal_t
 
     # get offset's color
     if pc.appearance_dim > 0:
@@ -90,7 +93,7 @@ def generate_neural_gaussians(viewpoint_camera, pc : GaussianModel, visible_mask
     
     # offsets
     # offsets = grid_offsets.view([-1, 3]) # [mask]
-    offsets = pc.get_offset_mlp(torch.cat([feat, ob_time], dim=1))
+    offsets = pc.get_offset_mlp(cat_local_time)
     offsets = offsets.reshape([anchor.shape[0]*pc.n_offsets, 3]) # [mask]
     
     # combine for parallel masking
@@ -109,7 +112,7 @@ def generate_neural_gaussians(viewpoint_camera, pc : GaussianModel, visible_mask
     xyz = repeat_anchor + offsets
 
     if is_training:
-        return xyz, color, opacity, scaling, rot, neural_opacity, mask
+        return xyz, color, opacity, scaling, rot, neural_opacity, mask, marginal_t
     else:
         return xyz, color, opacity, scaling, rot
 
@@ -122,7 +125,7 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
     is_training = pc.get_color_mlp.training
         
     if is_training:
-        xyz, color, opacity, scaling, rot, neural_opacity, mask = generate_neural_gaussians(viewpoint_camera, pc, visible_mask, is_training=is_training)
+        xyz, color, opacity, scaling, rot, neural_opacity, mask, marginal_t = generate_neural_gaussians(viewpoint_camera, pc, visible_mask, is_training=is_training)
     else:
         xyz, color, opacity, scaling, rot = generate_neural_gaussians(viewpoint_camera, pc, visible_mask, is_training=is_training)
 
@@ -191,6 +194,7 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
                 "neural_opacity": neural_opacity,
                 "scaling": scaling,
                 "depth": rendered_depth,
+                "marginal_t": marginal_t
                 }
     else:
         return {"render": rendered_image,
