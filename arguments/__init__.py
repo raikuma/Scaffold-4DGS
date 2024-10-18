@@ -52,6 +52,7 @@ class ModelParams(ParamGroup):
         self.feat_dim = 32
         self.n_offsets = 10
         self.voxel_size =  0.001 # if voxel_size<=0, using 1nn dist
+        self.t_grid_size = 0.0333
         self.update_depth = 3
         self.update_init_factor = 16
         self.update_hierachy_factor = 4
@@ -96,6 +97,7 @@ class PipelineParams(ParamGroup):
         self.convert_SHs_python = False
         self.compute_cov3D_python = False
         self.debug = False
+        self.vis = False
         super().__init__(parser, "Pipeline Parameters")
 
 class OptimizationParams(ParamGroup):

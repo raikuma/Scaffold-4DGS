@@ -124,16 +124,32 @@ def generate_neural_gaussians(viewpoint_camera, pc : GaussianModel, visible_mask
 
     # time variant
     # power = torch.exp(-(xyz[:, 3:4] - timestamp)**2 / (2 * scaling[:, 3:4]**2))
-    sigma = torch.exp(scale_rot[:,3:4])
+    # sigma = torch.exp(scale_rot[:,3:4]) * scaling_repeat[:, 7:8]
     # sigma = torch.exp(tscales)
+    sigma = torch.nn.ELU()(scale_rot[:,3:4]) + 1
     # sigma = 1000
     # marginal_t = torch.exp(-2*(t-timestamp)**2/(sigma+0.001))
-    marginal_t = torch.exp(-(t-timestamp)**2*sigma)
-    # marginal_t = torch.clamp(marginal_t*10, 0.0, 1.0)
+    # marginal_t = torch.exp(-(t-timestamp)**2*sigma)
+    # marginal_t = torch.exp(-((t-timestamp)*sigma)**8)
+    marginal_t = torch.exp(-((t-timestamp)*sigma)**4)
+    # marginal_t = torch.clamp(marginal_t*3, 0.0, 1.0)
+    # marginal_t = 1 / (1 + torch.exp((-200*(sigma-torch.abs(t-timestamp))).clip(-50, 50)))
+
     opacity = opacity * marginal_t
 
+    # mask2 = marginal_t[:,0] > 0.05
+    # xyz = xyz[mask2]
+    # color = color[mask2]
+    # opacity = opacity[mask2]
+    # scaling = scaling[mask2]
+    # rot = rot[mask2]
+    # sigma = sigma[mask2]
+    # temp_mask = mask.clone()
+    # temp_mask[mask] = mask2
+    # mask = temp_mask
+
     if is_training:
-        return xyz, color, opacity, scaling, rot, neural_opacity, mask
+        return xyz, color, opacity, scaling, rot, neural_opacity, sigma, mask
     else:
         return xyz, color, opacity, scaling, rot, mask
 
@@ -146,7 +162,7 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
     is_training = pc.get_color_mlp.training
         
     if is_training:
-        xyz, color, opacity, scaling, rot, neural_opacity, mask = generate_neural_gaussians(viewpoint_camera, pc, visible_mask, is_training=is_training)
+        xyz, color, opacity, scaling, rot, neural_opacity, sigma, mask = generate_neural_gaussians(viewpoint_camera, pc, visible_mask, is_training=is_training)
     else:
         xyz, color, opacity, scaling, rot, mask = generate_neural_gaussians(viewpoint_camera, pc, visible_mask, is_training=is_training)
 
@@ -219,6 +235,7 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
                 "scaling": scaling,
                 "depth": rendered_depth,
                 "opacity": opacity,
+                "sigma": sigma,
                 }
     else:
         return {"render": rendered_image,
@@ -227,7 +244,7 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
                 "radii": radii,
                 }
     
-def render_anchor(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, scaling_modifier = 1.0, visible_mask=None, retain_grad=False, gscale=1.0, precolor=None, op=False):
+def render_anchor(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, scaling_modifier = 1.0, visible_mask=None, retain_grad=False, gscale=1.0, precolor=None, op=False, time_duration=None):
     """
     Render the scene. 
     
@@ -246,6 +263,8 @@ def render_anchor(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.T
     rot = pc.get_rotation
     # color = (xyz - xyz.min()) / (xyz.max() - xyz.min())
     t_anchor = pc.get_anchor[:, 3:4]
+    if time_duration is not None:
+        t_anchor = (t_anchor - time_duration[0]) / (time_duration[1] - time_duration[0])
     g = t_anchor
     r = torch.zeros_like(g)
     b = 1 - t_anchor

@@ -48,6 +48,7 @@ class GaussianModel:
                  feat_dim: int=32, 
                  n_offsets: int=5, 
                  voxel_size: float=0.01,
+                 t_grid_size: float=0.0333,
                  update_depth: int=3, 
                  update_init_factor: int=100,
                  update_hierachy_factor: int=4,
@@ -64,6 +65,7 @@ class GaussianModel:
         self.feat_dim = feat_dim
         self.n_offsets = n_offsets
         self.voxel_size = voxel_size
+        self.t_grid_size = t_grid_size
         self.update_depth = update_depth
         self.update_init_factor = update_init_factor
         self.update_hierachy_factor = update_hierachy_factor
@@ -268,7 +270,7 @@ class GaussianModel:
         print(f'Initial voxel_size: {self.voxel_size}')
         
         
-        points = self.voxelize_sample(points, voxel_size=self.voxel_size * 100)
+        points = self.voxelize_sample(points, voxel_size=self.voxel_size * 1)
         fused_point_cloud = torch.tensor(np.asarray(points)).float().cuda()
         offsets = torch.zeros((fused_point_cloud.shape[0], self.n_offsets, 4)).float().cuda()
         tscales = torch.zeros((fused_point_cloud.shape[0], self.n_offsets, 1), device="cuda")
@@ -286,7 +288,7 @@ class GaussianModel:
 
         anchors = torch.zeros((fused_point_cloud.shape[0], 4), device="cuda")
         anchors[:, :3] = fused_point_cloud
-        anchors[:, 3] = 0.5
+        anchors[:, 3] = 0.0
 
         self._anchor = nn.Parameter(anchors.requires_grad_(True))
         self._offset = nn.Parameter(offsets.requires_grad_(True))
@@ -559,7 +561,7 @@ class GaussianModel:
 
 
     # statis grad information to guide liftting. 
-    def training_statis(self, viewspace_point_tensor, opacity, update_filter, offset_selection_mask, anchor_visible_mask, opacity_t):
+    def training_statis(self, viewspace_point_tensor, opacity, update_filter, offset_selection_mask, anchor_visible_mask, opacity_t, sigma):
         # update opacity stats
         temp_opacity = opacity.clone().view(-1).detach()
         temp_opacity[temp_opacity<0] = 0
@@ -580,10 +582,15 @@ class GaussianModel:
         temp_opacity_t = torch.zeros_like(temp_mask, dtype=torch.float)
         temp_opacity_t[temp_mask] = opacity_t.squeeze(-1)
 
+        # temp_sigma = torch.zeros_like(temp_mask, dtype=torch.float)
+        # temp_sigma[temp_mask] = sigma.squeeze(-1)
+
         grad_norm = torch.norm(viewspace_point_tensor.grad[update_filter,:2], dim=-1, keepdim=True)
         self.offset_gradient_accum[combined_mask] += grad_norm
+        # self.offset_gradient_accum[combined_mask] += grad_norm * temp_sigma[combined_mask].unsqueeze(-1)
         # self.offset_denom[combined_mask] += 1
         self.offset_denom[combined_mask] += 1 * temp_opacity_t[combined_mask].unsqueeze(-1)
+        # self.offset_denom[combined_mask] += 1 * temp_opacity_t[combined_mask].unsqueeze(-1) * temp_sigma[combined_mask].unsqueeze(-1)
 
         
 
@@ -668,11 +675,20 @@ class GaussianModel:
             # size_factor = min(self.update_init_factor // (self.update_hierachy_factor**i), 1)
             size_factor = self.update_init_factor // (self.update_hierachy_factor**i)
             cur_size = self.voxel_size*size_factor
+            t_size = self.t_gird_size
             
-            grid_coords = torch.round(self.get_anchor / cur_size).int()
+            # grid_coords = torch.round(self.get_anchor / cur_size).int()
+            grid_coords = torch.cat([
+                torch.round(self.get_anchor[:,:3] / cur_size).int(),
+                torch.round(self.get_anchor[:,3:4] / t_size).int()
+            ], dim=1)
 
             selected_xyz = all_xyz.view([-1, 4])[candidate_mask]
-            selected_grid_coords = torch.round(selected_xyz / cur_size).int()
+            # selected_grid_coords = torch.round(selected_xyz / cur_size).int()
+            selected_grid_coords = torch.cat([
+                torch.round(selected_xyz[:,:3] / cur_size).int(),
+                torch.round(selected_xyz[:,3:4] / t_size).int()
+            ], dim=1)
 
             selected_grid_coords_unique, inverse_indices = torch.unique(selected_grid_coords, return_inverse=True, dim=0)
 
@@ -693,12 +709,20 @@ class GaussianModel:
 
             remove_duplicates = ~remove_duplicates
             # remove_duplicates = torch.ones_like(remove_duplicates)
-            candidate_anchor = selected_grid_coords_unique[remove_duplicates]*cur_size
+            # candidate_anchor = selected_grid_coords_unique[remove_duplicates]*cur_size
+            candidate_anchor = torch.cat([
+                selected_grid_coords_unique[remove_duplicates][:,:3]*cur_size,
+                selected_grid_coords_unique[remove_duplicates][:,3:4]*t_size
+            ], dim=1)
 
             # print(f"{len(candidate_anchor)/len(selected_grid_coords)} ({len(candidate_anchor)}/{len(selected_grid_coords)})")
             
             if candidate_anchor.shape[0] > 0:
-                new_scaling = torch.ones_like(candidate_anchor).repeat([1,2]).float().cuda()*cur_size # *0.05
+                # new_scaling = torch.ones_like(candidate_anchor).repeat([1,2]).float().cuda()*cur_size # *0.05
+                new_scaling = torch.cat([
+                    torch.ones_like(candidate_anchor[:,:3]).repeat([1,2]).float().cuda()*cur_size,
+                    torch.ones_like(candidate_anchor[:,3:4]).repeat([1,2]).float().cuda()*t_size
+                ], dim=1)
                 new_scaling = torch.log(new_scaling)
                 new_rotation = torch.zeros([candidate_anchor.shape[0], 4], device=candidate_anchor.device).float()
                 new_rotation[:,0] = 1.0

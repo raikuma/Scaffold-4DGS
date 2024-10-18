@@ -84,7 +84,7 @@ def saveRuntimeCode(dst: str) -> None:
 def training(dataset, opt, pipe, dataset_name, testing_iterations, saving_iterations, checkpoint_iterations, checkpoint, num_workers, debug_from, wandb=None, logger=None, ply_path=None):
     first_iter = 0
     tb_writer = prepare_output_and_logger(dataset)
-    gaussians = GaussianModel(dataset.feat_dim, dataset.n_offsets, dataset.voxel_size, dataset.update_depth, dataset.update_init_factor, dataset.update_hierachy_factor, dataset.use_feat_bank, 
+    gaussians = GaussianModel(dataset.feat_dim, dataset.n_offsets, dataset.voxel_size, dataset.t_grid_size, dataset.update_depth, dataset.update_init_factor, dataset.update_hierachy_factor, dataset.use_feat_bank, 
                               dataset.appearance_dim, dataset.ratio, dataset.add_opacity_dist, dataset.add_cov_dist, dataset.add_color_dist, dataset.time_dim, dataset.time_embedding)
     scene = Scene(dataset, gaussians, ply_path=ply_path, shuffle=False)
     gaussians.training_setup(opt)
@@ -156,6 +156,7 @@ def training(dataset, opt, pipe, dataset_name, testing_iterations, saving_iterat
             
             image, viewspace_point_tensor, visibility_filter, offset_selection_mask, radii, scaling, opacity = render_pkg["render"], render_pkg["viewspace_points"], render_pkg["visibility_filter"], render_pkg["selection_mask"], render_pkg["radii"], render_pkg["scaling"], render_pkg["neural_opacity"]
             opacity_t = render_pkg["opacity"]
+            sigma = render_pkg["sigma"]
             image_depth = render_pkg["depth"].detach().expand_as(image)
             image_depth = (image_depth - image_depth.min()) / (image_depth.max() - image_depth.min())
 
@@ -174,7 +175,7 @@ def training(dataset, opt, pipe, dataset_name, testing_iterations, saving_iterat
 
             with torch.no_grad():
                 # Debug Visualize
-                if pipe.debug:
+                if pipe.vis:
                     if iteration % 100 == 0 and iteration < opt.update_until:
 
                         # TRAIN VIEW
@@ -198,10 +199,11 @@ def training(dataset, opt, pipe, dataset_name, testing_iterations, saving_iterat
                         img_test = render_pkg["render"]
 
                         background2 = torch.tensor([0, 0, 0], dtype=torch.float32, device="cuda")
-                        render_pkg = render_anchor(test_view, gaussians, pipe, background2, visible_mask=vvmask, retain_grad=False)
+                        render_pkg = render_anchor(test_view, gaussians, pipe, background2, visible_mask=vvmask, retain_grad=False, time_duration=dataset.time_duration)
                         img_test_anchor = render_pkg["render"]
 
-                        t_gs = (gaussians.get_anchor[:,3:4].unsqueeze(dim=1) + gaussians._offset[:,:,3:4] * gaussians.get_scaling[:,3:4].unsqueeze(dim=1)).view(-1, 1).clamp(0, 1)
+                        t_gs = (gaussians.get_anchor[:,3:4].unsqueeze(dim=1) + gaussians._offset[:,:,3:4] * gaussians.get_scaling[:,3:4].unsqueeze(dim=1)).view(-1, 1)
+                        t_gs = (t_gs - dataset.time_duration[0]) / (dataset.time_duration[1] - dataset.time_duration[0])
                         g = t_gs
                         r = torch.zeros_like(g)
                         b = 1 - t_gs
@@ -261,7 +263,7 @@ def training(dataset, opt, pipe, dataset_name, testing_iterations, saving_iterat
                 # densification
                 if iteration < opt.update_until and iteration > opt.start_stat:
                     # add statis
-                    gaussians.training_statis(viewspace_point_tensor, opacity, visibility_filter, offset_selection_mask, voxel_visible_mask, opacity_t)
+                    gaussians.training_statis(viewspace_point_tensor, opacity, visibility_filter, offset_selection_mask, voxel_visible_mask, opacity_t, sigma)
                     
                     # densification
                     if iteration > opt.update_from and iteration % opt.update_interval == 0:
@@ -436,7 +438,7 @@ def render_set(model_path, name, iteration, views, gaussians, pipeline, backgrou
 
 def render_sets(dataset : ModelParams, iteration : int, pipeline : PipelineParams, skip_train=True, skip_test=False, wandb=None, tb_writer=None, dataset_name=None, logger=None):
     with torch.no_grad():
-        gaussians = GaussianModel(dataset.feat_dim, dataset.n_offsets, dataset.voxel_size, dataset.update_depth, dataset.update_init_factor, dataset.update_hierachy_factor, dataset.use_feat_bank, 
+        gaussians = GaussianModel(dataset.feat_dim, dataset.n_offsets, dataset.voxel_size, dataset.t_grid_size, dataset.update_depth, dataset.update_init_factor, dataset.update_hierachy_factor, dataset.use_feat_bank, 
                               dataset.appearance_dim, dataset.ratio, dataset.add_opacity_dist, dataset.add_cov_dist, dataset.add_color_dist, dataset.time_dim, dataset.time_embedding)
         scene = Scene(dataset, gaussians, load_iteration=iteration, shuffle=False)
         gaussians.eval()

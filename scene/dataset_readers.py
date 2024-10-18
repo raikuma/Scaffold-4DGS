@@ -233,8 +233,8 @@ def readCamerasFromTransforms(args, path, transformsfile, white_background, exte
         frame = idx_frame[1]
         timestamp = frame.get('time', 0.0)
         frame_ratio = args.frame_ratio
-        if frame_ratio > 1:
-            timestamp /= frame_ratio
+        # if frame_ratio > 1:
+        timestamp /= frame_ratio
         if args.time_duration is not None and 'time' in frame:
             if timestamp < args.time_duration[0] or timestamp > args.time_duration[1]:
                 return
@@ -253,6 +253,7 @@ def readCamerasFromTransforms(args, path, transformsfile, white_background, exte
 
         image_path = os.path.join(path, cam_name) # .replace('hdImgs_unditorted', 'hdImgs_unditorted_rgba').replace('.jpg', '.png')
         image_name = Path(cam_name).stem
+        uid = image_name.split("_")[0].split("cam")[1]
         
         if not args.dataloader:
             with Image.open(image_path) as image_load:
@@ -288,7 +289,7 @@ def readCamerasFromTransforms(args, path, transformsfile, white_background, exte
             fl_y = frame['fl_y']
             cx = frame['cx']
             cy = frame['cy']
-            return CameraInfo(uid=idx, R=R, T=T, FovY=FovY, FovX=FovX, image=image, depth=depth,
+            return CameraInfo(uid=uid, R=R, T=T, FovY=FovY, FovX=FovX, image=image, depth=depth,
                         image_path=image_path, image_name=image_name, width=width, height=height, timestamp=timestamp,
                         fl_x=fl_x, fl_y=fl_y, cx=cx, cy=cy)
             
@@ -298,14 +299,14 @@ def readCamerasFromTransforms(args, path, transformsfile, white_background, exte
             fl_y = contents['fl_y']
             cx = contents['cx']
             cy = contents['cy']
-            return CameraInfo(uid=idx, R=R, T=T, FovY=FovY, FovX=FovX, image=image, depth=depth,
+            return CameraInfo(uid=uid, R=R, T=T, FovY=FovY, FovX=FovX, image=image, depth=depth,
                         image_path=image_path, image_name=image_name, width=width, height=height, timestamp=timestamp,
                         fl_x=fl_x, fl_y=fl_y, cx=cx, cy=cy)
         else:
             fovy = focal2fov(fov2focal(fovx, width), height)
             FovY = fovy
             FovX = fovx
-            return CameraInfo(uid=idx, R=R, T=T, FovY=FovY, FovX=FovX, image=image, depth=depth,
+            return CameraInfo(uid=uid, R=R, T=T, FovY=FovY, FovX=FovX, image=image, depth=depth,
                             image_path=image_path, image_name=image_name, width=width, height=height, timestamp=timestamp)
     
     with ThreadPool() as pool:
