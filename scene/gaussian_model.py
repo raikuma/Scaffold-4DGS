@@ -675,7 +675,7 @@ class GaussianModel:
             # size_factor = min(self.update_init_factor // (self.update_hierachy_factor**i), 1)
             size_factor = self.update_init_factor // (self.update_hierachy_factor**i)
             cur_size = self.voxel_size*size_factor
-            t_size = self.t_gird_size
+            t_size = self.t_grid_size
             
             # grid_coords = torch.round(self.get_anchor / cur_size).int()
             grid_coords = torch.cat([
